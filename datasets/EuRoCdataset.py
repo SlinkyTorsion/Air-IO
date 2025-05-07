@@ -19,6 +19,7 @@ class Euroc(Sequence):
         rot_type=None,
         gravity=9.81007, 
         remove_g=False,
+        denoise=True,
         **kwargs
     ):
         super(Euroc, self).__init__()
@@ -37,37 +38,52 @@ class Euroc(Sequence):
 
         data_path = os.path.join(data_root, data_name)
         # load imu data
-        self.load_imu(data_path)
-        self.load_gt(data_path)
-        # EUROC require an interpolation
+        self.load_imu(data_path, denoise)
+        self.load_gt(data_path, denoise)
+        # EUROC require an interpolation when denoise=False
 
-        t_start = np.max([self.data["gt_time"][0], self.data["time"][0]])
-        t_end = np.min([self.data["gt_time"][-1], self.data["time"][-1]])
-        # find the index of the start and end
-        idx_start_imu = np.searchsorted(self.data["time"], t_start)
-        idx_start_gt = np.searchsorted(self.data["gt_time"], t_start)
+        if not denoise:
+            t_start = np.max([self.data["gt_time"][0], self.data["time"][0]])
+            t_end = np.min([self.data["gt_time"][-1], self.data["time"][-1]])
+            # find the index of the start and end
+            idx_start_imu = np.searchsorted(self.data["time"], t_start)
+            idx_start_gt = np.searchsorted(self.data["gt_time"], t_start)
 
-        idx_end_imu = np.searchsorted(self.data["time"], t_end, "right")
-        idx_end_gt = np.searchsorted(self.data["gt_time"], t_end, "right")
+            idx_end_imu = np.searchsorted(self.data["time"], t_end, "right")
+            idx_end_gt = np.searchsorted(self.data["gt_time"], t_end, "right")
 
-        for k in ["gt_time", "pos", "quat", "velocity"]:
-            self.data[k] = self.data[k][idx_start_gt:idx_end_gt]
+            for k in ["gt_time", "pos", "quat", "velocity"]:
+                self.data[k] = self.data[k][idx_start_gt:idx_end_gt]
 
-        for k in ["time", "acc", "gyro"]:
-            self.data[k] = self.data[k][idx_start_imu:idx_end_imu]
+            for k in ["time", "acc", "gyro"]:
+                self.data[k] = self.data[k][idx_start_imu:idx_end_imu]
 
-        ## start interpotation
-        self.data["gt_orientation"] = self.interp_rot(
-            self.data["time"], self.data["gt_time"], self.data["quat"]
-        )
-        self.data["gt_translation"] = self.interp_xyz(
-            self.data["time"], self.data["gt_time"], self.data["pos"]
-        )
+            ## start interpotation
+            self.data["gt_orientation"] = self.interp_rot(
+                self.data["time"], self.data["gt_time"], self.data["quat"]
+            )
+            self.data["gt_translation"] = self.interp_xyz(
+                self.data["time"], self.data["gt_time"], self.data["pos"]
+            )
 
-        self.data["velocity"] = self.interp_xyz(
-            self.data["time"], self.data["gt_time"], self.data["velocity"]
-        )
+            self.data["velocity"] = self.interp_xyz(
+                self.data["time"], self.data["gt_time"], self.data["velocity"]
+            )
+        else:
+            assert np.all(self.data["time"] == self.data["gt_time"])
+            assert self.data["acc"].shape[0] == self.data["pos"].shape[0]
 
+            self.data["quat"] = torch.tensor(self.data["quat"])
+            self.data["pos"] = torch.tensor(self.data["pos"])
+            self.data["velocity"] = torch.tensor(self.data["velocity"])
+
+            rot = torch.zeros_like(self.data["quat"])
+            rot[:, 3] = self.data["quat"][:, 0]
+            rot[:, :3] = self.data["quat"][:, 1:]
+
+            self.data["gt_orientation"] = pp.SO3(rot)
+            self.data["gt_translation"] = self.data["pos"]
+            self.data["velocity"] = self.data["velocity"]
 
         self.data["time"] = torch.tensor(self.data["time"])
         self.data["gt_time"] = torch.tensor(self.data["gt_time"])
@@ -90,23 +106,21 @@ class Euroc(Sequence):
     def get_length(self):
         return self.data["time"].shape[0]
 
-    def load_imu(self, folder):
-        imu_data = np.loadtxt(
-            os.path.join(folder, "mav0/imu0/data.csv"), dtype=float, delimiter=","
-        )
+    def load_imu(self, folder, denoise):
+        imu_path = os.path.join(folder, "mav0/imu0")
+        imu_fn = "data.csv" if not denoise else "denoise_imu.csv"
+        imu_data = np.loadtxt(os.path.join(imu_path, imu_fn), dtype=float, delimiter=",")
         self.data["time"] = imu_data[:, 0] / 1e9
         self.data["gyro"] = imu_data[:, 1:4]  # w_RS_S_x [rad s^-1],w_RS_S_y [rad s^-1],w_RS_S_z [rad s^-1]
         self.data["acc"] = imu_data[:, 4:]  # acc a_RS_S_x [m s^-2],a_RS_S_y [m s^-2],a_RS_S_z [m s^-2]
-    def load_gt(self, folder):
-        gt_data = np.loadtxt(
-            os.path.join(folder, "mav0/state_groundtruth_estimate0/data.csv"),
-            dtype=float,
-            delimiter=",",
-        )
+    def load_gt(self, folder, denoise):
+        gt_path = os.path.join(folder, "mav0/state_groundtruth_estimate0")
+        gt_fn = "data.csv" if not denoise else "denoise_gt.csv" 
+        gt_data = np.loadtxt(os.path.join(gt_path, gt_fn), dtype=float, delimiter=",")
         self.data["gt_time"] = gt_data[:, 0] / 1e9
         self.data["pos"] = gt_data[:, 1:4]
         self.data["quat"] = gt_data[:, 4:8]  # w, x, y, z
-        self.data["velocity"] = gt_data[:, -9:-6]
+        self.data["velocity"] = gt_data[:, 8:11]  
 
     def interp_rot(self, time, opt_time, quat):
         imu_dt = torch.Tensor(time - opt_time[0])

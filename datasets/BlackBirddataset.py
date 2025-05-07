@@ -13,6 +13,7 @@ from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation, Slerp
 import pickle
 import json
+from scipy.spatial.transform import Rotation as R
 
 class BlackBird(Sequence):
     def __init__(

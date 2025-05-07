@@ -80,6 +80,8 @@ class SeqDataset(Data.Dataset):
             "dt": self.data["dt"][frame_id:end_frame_id],
             "acc": self.data["acc"][frame_id:end_frame_id],
             "gyro": self.data["gyro"][frame_id:end_frame_id],
+            "denoise_acc": self.data["denoise_acc"][frame_id:end_frame_id] if "denoise_acc" in self.data.keys() else None,
+            "denoise_gyro": self.data["denoise_gyro"][frame_id:end_frame_id] if "denoise_gyro" in self.data.keys() else None,
             "rot": self.data["gt_orientation"][frame_id:end_frame_id],
             "gt_pos": self.data["gt_translation"][frame_id + 1 : end_frame_id + 1],
             "gt_rot": self.data["gt_orientation"][frame_id + 1 : end_frame_id + 1],
@@ -191,12 +193,14 @@ class SeqeuncesDataset(Data.Dataset):
             self.dt,
             self.acc,
             self.gyro,
+            self.denoise_acc,
+            self.denoise_gyro,
             self.gt_pos,
             self.gt_ori,
             self.gt_velo,
             self.index_map,
             self.seq_idx,
-        ) = ([], [], [], [], [], [], [], [], 0)
+        ) = ([], [], [], [], [], [], [], [], [], [], 0)
         self.uni = torch.distributions.uniform.Uniform(-torch.ones(1), torch.ones(1))
         self.device = device
         self.interpolate = True
@@ -236,6 +240,9 @@ class SeqeuncesDataset(Data.Dataset):
             self.ts.append(seq.data["time"][start_frame:end_frame + 1])
         self.acc.append(seq.data["acc"][start_frame:end_frame])
         self.gyro.append(seq.data["gyro"][start_frame:end_frame])
+        if "denoise_acc" in seq.data:
+            self.denoise_acc.append(seq.data["denoise_acc"][start_frame:end_frame])
+            self.denoise_gyro.append(seq.data["denoise_gyro"][start_frame:end_frame])
         # the groud truth state should include the init state and integrated state, thus has one
         # frame than imu data
         self.dt.append(seq.data["dt"][start_frame : end_frame + 1])
@@ -334,6 +341,9 @@ class SeqeuncesDataset(Data.Dataset):
             "gyro": self.gyro[seq_id][frame_id:end_frame_id],
             "rot": self.gt_ori[seq_id][frame_id:end_frame_id],
         }
+        if len(self.denoise_gyro) > 0 and len(self.denoise_acc) > 0:
+            data["denoise_acc"] = self.denoise_acc[seq_id][frame_id:end_frame_id]
+            data["denoise_gyro"] = self.denoise_gyro[seq_id][frame_id:end_frame_id]
         init_state = {
             "init_rot": self.gt_ori[seq_id][frame_id][None, ...],
             "init_pos": self.gt_pos[seq_id][frame_id][None, ...],
