@@ -24,7 +24,6 @@ from ekf import IMUEKF
 from IMUstate import IMUstate
 from matplotlib import pyplot as plt
 from ekfutil import plot_bias_subplots, interp_xyz
-import pdb
 
 class SingleIMU(IMUstate):
     '''

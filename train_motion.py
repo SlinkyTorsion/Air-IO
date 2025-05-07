@@ -3,7 +3,7 @@ import os
 import tqdm, wandb
 from model import net_dict
 
-from datasets import collate_fcs,SeqeuncesMotionDataset
+from datasets import collate_fcs,SequencesMotionDataset
 import pickle
 
 import numpy as np
@@ -31,11 +31,13 @@ def train(network, loader, confs, epoch, optimizer):
 
     t_range = tqdm.tqdm(loader)
     for i, (data,_, label) in enumerate(t_range):
+        # import pdb; pdb.set_trace()
         data, label = move_to([data, label], confs.device)
         rot = label['gt_rot'][:,:-1,:].Log().tensor()
         inte_state = network(data, rot)
         gt_label = network.get_label(label['gt_vel'])
-        loss_state = get_motion_loss(inte_state, gt_label, confs)
+        ts = network.get_label(data['ts'][...,None])[0] if confs.obsersup else None
+        loss_state = get_motion_loss(inte_state, gt_label, confs, ts)
 
         # statistics
         losses += loss_state["loss"].item()
@@ -179,9 +181,9 @@ if __name__ == "__main__":
     else:
         gravity = 9.81007
 
-    train_dataset = SeqeuncesMotionDataset(data_set_config=conf.dataset.train)
-    test_dataset = SeqeuncesMotionDataset(data_set_config=conf.dataset.test)
-    eval_dataset = SeqeuncesMotionDataset(data_set_config=conf.dataset.eval)
+    train_dataset = SequencesMotionDataset(data_set_config=conf.dataset.train)
+    test_dataset = SequencesMotionDataset(data_set_config=conf.dataset.test)
+    eval_dataset = SequencesMotionDataset(data_set_config=conf.dataset.eval)
 
     if "collate" in conf.dataset.keys():
         collate_fn_train, collate_fn_test = collate_fcs[conf.dataset.collate.type], collate_fcs[conf.dataset.collate.type]

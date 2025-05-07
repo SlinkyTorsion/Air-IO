@@ -3,17 +3,25 @@ from .loss_func import loss_fc_list, diag_ln_cov_loss
 from utils import report_hasNan
 import numpy as np
 
+def construct_observable_label(dt, label):
+    velo_diff = label[:, 1:, :] - label[:, :-1, :]
+    pass
+
 def motion_loss_(fc, pred, targ):
     dist = pred - targ
     loss = fc(dist)
     return loss, dist
 
-def get_motion_loss(inte_state, label, confs):
+def get_motion_loss(inte_state, label, confs, ts=None):
     ## The state loss for evaluation
     loss, cov_loss = 0, {}
     loss_fc = loss_fc_list[confs.loss]
     
-    vel_loss, vel_dist = motion_loss_(loss_fc, inte_state['net_vel'],label)
+    vel_loss, vel_dist = motion_loss_(loss_fc, inte_state['net_vel'], label)
+    if ts is not None:
+        assert ts.shape[1] == label.shape[1]
+        obser_label = construct_observable_label(ts, label)
+        obser_vel_loss, obser_vel_dist = motion_loss_(loss_fc, inte_state['net_vel'], obser_label)
 
     # Apply the covariance loss
     if confs.propcov:

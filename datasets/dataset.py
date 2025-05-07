@@ -172,7 +172,7 @@ class SeqInfDataset(SeqDataset):
         }
 
 
-class SeqeuncesDataset(Data.Dataset):
+class SequencesDataset(Data.Dataset):
     """
     For the purpose of training and inferering
     1. Abandon the features of the last time frame, since there are no ground truth pose and dt
@@ -187,7 +187,7 @@ class SeqeuncesDataset(Data.Dataset):
         data_root=None,
         device="cuda:0",
     ):
-        super(SeqeuncesDataset, self).__init__()
+        super(SequencesDataset, self).__init__()
         (
             self.ts,
             self.dt,
@@ -240,9 +240,6 @@ class SeqeuncesDataset(Data.Dataset):
             self.ts.append(seq.data["time"][start_frame:end_frame + 1])
         self.acc.append(seq.data["acc"][start_frame:end_frame])
         self.gyro.append(seq.data["gyro"][start_frame:end_frame])
-        if "denoise_acc" in seq.data:
-            self.denoise_acc.append(seq.data["denoise_acc"][start_frame:end_frame])
-            self.denoise_gyro.append(seq.data["denoise_gyro"][start_frame:end_frame])
         # the groud truth state should include the init state and integrated state, thus has one
         # frame than imu data
         self.dt.append(seq.data["dt"][start_frame : end_frame + 1])
@@ -379,7 +376,7 @@ if __name__ == "__main__":
     print(args)
     conf = ConfigFactory.parse_file(args.config)
 
-    dataset = SeqeuncesDataset(data_set_config=conf.train)
+    dataset = SequencesDataset(data_set_config=conf.train)
     loader = Data.DataLoader(
         dataset=dataset, batch_size=1, shuffle=False, collate_fn=custom_collate
     )

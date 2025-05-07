@@ -4,11 +4,11 @@ import numpy as np
 import torch
 import torch.utils.data as Data
 from pyhocon import ConfigFactory
-from .dataset import Sequence, SeqeuncesDataset
+from .dataset import Sequence, SequencesDataset
 import math
 import pypose as pp
 
-class SeqeuncesMotionDataset(SeqeuncesDataset):
+class SequencesMotionDataset(SequencesDataset):
     def __init__(
         self,
         data_set_config,
@@ -136,7 +136,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     conf = ConfigFactory.parse_file(args.config)
 
-    dataset = SeqeuncesMotionDataset(data_set_config=conf.train)
+    dataset = SequencesMotionDataset(data_set_config=conf.train)
     loader = Data.DataLoader(
         dataset=dataset, batch_size=1, shuffle=False, collate_fn=custom_collate
     )

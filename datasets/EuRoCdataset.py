@@ -19,7 +19,7 @@ class Euroc(Sequence):
         rot_type=None,
         gravity=9.81007, 
         remove_g=False,
-        denoise=True,
+        denoise=False,
         **kwargs
     ):
         super(Euroc, self).__init__()

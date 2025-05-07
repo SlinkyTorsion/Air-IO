@@ -10,7 +10,7 @@ import tqdm
 from utils import move_to, save_state
 from pyhocon import ConfigFactory
 
-from datasets import collate_fcs, SeqeuncesMotionDataset
+from datasets import collate_fcs, SequencesMotionDataset
 from model import net_dict
 from utils import *
 
@@ -88,10 +88,10 @@ if __name__ == '__main__':
             else:
                 dataset_conf["mode"] = "infevaluate"
             dataset_conf["exp_dir"] = conf.general.exp_dir
-            eval_dataset = SeqeuncesMotionDataset(data_set_config=dataset_conf, data_path=path, data_root=data_conf["data_root"])
+            eval_dataset = SequencesMotionDataset(data_set_config=dataset_conf, data_path=path, data_root=data_conf["data_root"])
             eval_loader = Data.DataLoader(dataset=eval_dataset, batch_size=args.batch_size, 
                                             shuffle=False, collate_fn=collate_fn, drop_last = False)
-            inference_state = inference(network=network, loader = eval_loader, confs=conf.train)    
+            inference_state = inference(network=network, loader = eval_loader, confs=conf.train)  
             if not "cov" in inference_state.keys():
                     inference_state["cov"] = torch.zeros_like(inference_state["net_vel"])         
             inference_state['ts'] = inference_state['ts']
