@@ -338,9 +338,6 @@ class SequencesDataset(Data.Dataset):
             "gyro": self.gyro[seq_id][frame_id:end_frame_id],
             "rot": self.gt_ori[seq_id][frame_id:end_frame_id],
         }
-        if len(self.denoise_gyro) > 0 and len(self.denoise_acc) > 0:
-            data["denoise_acc"] = self.denoise_acc[seq_id][frame_id:end_frame_id]
-            data["denoise_gyro"] = self.denoise_gyro[seq_id][frame_id:end_frame_id]
         init_state = {
             "init_rot": self.gt_ori[seq_id][frame_id][None, ...],
             "init_pos": self.gt_pos[seq_id][frame_id][None, ...],

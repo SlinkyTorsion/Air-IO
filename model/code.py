@@ -93,10 +93,12 @@ class CodeNetMotionwithRot(CodeNetMotion):
         self.veldecoder = nn.Sequential(nn.Linear(256, 128),nn.GELU(), nn.Linear(128, 3))
         self.velcov_decoder = nn.Sequential(nn.Linear(256, 128),nn.GELU(), nn.Linear(128, 3))
 
-    def encoder(self, feature, ori):
+    def encoder(self, feature, ori, obsersup=False):
+        # import pdb; pdb.set_trace()
         x1 = self.feature_encoder(feature.transpose(-1, -2)).transpose(-1, -2)
         x2 = self.ori_encoder(ori.transpose(-1,-2)).transpose(-1, -2) 
         x = torch.cat([x1, x2], dim = -1)
+        x = x[:, :-1, :] if obsersup else x
         
         x = self.fcn2(x)
         x = self.batchnorm2(x.transpose(-1,-2)).transpose(-1,-2)
@@ -105,10 +107,10 @@ class CodeNetMotionwithRot(CodeNetMotion):
         x, _ = self.gru2(x)
         return x
     
-    def forward(self, data, rot=None):
+    def forward(self, data, rot=None, obsersup=False):
         assert rot is not None
         feature = torch.cat([data["acc"], data["gyro"]], dim = -1)
-        feature = self.encoder(feature, rot)
+        feature = self.encoder(feature, rot, obsersup)
         net_vel = self.decoder(feature)
    
         #covariance propagation

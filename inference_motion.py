@@ -1,8 +1,10 @@
 import os
 import sys
+import time
 import torch
 
 import torch.utils.data as Data
+import matplotlib.pyplot as plt
 import argparse
 import pickle
 
@@ -13,7 +15,35 @@ from pyhocon import ConfigFactory
 from datasets import collate_fcs, SequencesMotionDataset
 from model import net_dict
 from utils import *
+from model.losses import get_observable_label, retrieve_from_obser
 
+
+def plot_velocity_comparison(axs, name, mode, ts, inf_state, label):
+    import matplotlib.pyplot as plt
+    
+    if inf_state is None:
+        return
+    inf_state = inf_state[0].cpu().numpy()
+    label = label[0].cpu().numpy()
+    if mode != 'absolute':
+        ts_values = ts.flatten()[:-1].cpu().numpy()
+    else:
+        ts_values = ts.flatten().cpu().numpy()
+    
+    if axs is None:
+        fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+    
+    components = ['x', 'y', 'z']
+    
+    for i in range(3):
+        axs[i].plot(ts_values, inf_state[:, i], label='Predicted Velocity')
+        axs[i].plot(ts_values, label[:, i], label='Ground Truth Velocity')
+        axs[i].set_ylabel(f'Velocity {components[i]}')
+        axs[i].legend()
+        axs[i].grid(True, linestyle='--', alpha=0.7)
+    axs[0].set_title(f'{mode} velocity')
+    axs[2].set_xlabel('Time (s)')
+    return axs
 
 def inference(network, loader, confs):
     '''
@@ -27,7 +57,34 @@ def inference(network, loader, confs):
         for data, _, label in tqdm.tqdm(loader):
             data, label = move_to([data, label],  confs.device)
             rot = label['gt_rot'][:,:-1,:].Log().tensor()
-            inte_state = network.forward(data, rot)
+            inte_state = network.forward(data, rot, confs.obsersup)
+            
+            ts = network.get_label(data['ts'][...,None])
+            rot = network.get_label(label['gt_rot'])
+            gt_label = network.get_label(label['gt_vel'])
+            rel_label = torch.diff(gt_label, axis=1)
+            
+            obs_state = inte_state['net_vel'] if confs.obsersup else None
+            obser_label = get_observable_label(ts, rot, gt_label)
+            
+            if confs.obsersup:
+                init_state = gt_label[0][0]
+                rel_state, abs_state = retrieve_from_obser(ts, rot, obs_state, init_state)
+            else:
+                rel_state, abs_state = torch.diff(inte_state['net_vel'], axis=1), inte_state['net_vel']
+                obs_state = get_observable_label(ts, rot, abs_state)
+
+            fig, axs = plt.subplots(3, 3, figsize=(15, 8))
+
+            plot_velocity_comparison(axs[:, 0], dataset_name, 'observable', ts, obs_state, obser_label)
+            plot_velocity_comparison(axs[:, 1], dataset_name, 'relative', ts, rel_state, rel_label)
+            plot_velocity_comparison(axs[:, 2], dataset_name, 'absolute', ts, abs_state, gt_label)
+
+            plt.suptitle(f'Velocity Comparison: {dataset_name}')
+            plt.tight_layout()
+            plt.savefig(f'{save_folder}/{dataset_name}_velocity_comparison.png', dpi=300)
+            plt.close(fig)
+            
             inte_state['ts'] = network.get_label(data['ts'][...,None])[0]
             save_state(evaluate_states, inte_state)
            
@@ -88,6 +145,8 @@ if __name__ == '__main__':
             else:
                 dataset_conf["mode"] = "infevaluate"
             dataset_conf["exp_dir"] = conf.general.exp_dir
+            dataset_name = path.split("/")[1]
+            print("dataset_name:", dataset_name)
             eval_dataset = SequencesMotionDataset(data_set_config=dataset_conf, data_path=path, data_root=data_conf["data_root"])
             eval_loader = Data.DataLoader(dataset=eval_dataset, batch_size=args.batch_size, 
                                             shuffle=False, collate_fn=collate_fn, drop_last = False)
@@ -102,4 +161,4 @@ if __name__ == '__main__':
     print("save netout, ", net_result_path)
     with open(net_result_path, 'wb') as handle:
         pickle.dump(net_out_result, handle, protocol=pickle.HIGHEST_PROTOCOL)
-   
+
