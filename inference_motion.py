@@ -36,8 +36,8 @@ def plot_velocity_comparison(axs, name, mode, ts, inf_state, label):
     components = ['x', 'y', 'z']
     
     for i in range(3):
-        axs[i].plot(ts_values, inf_state[:, i], label='Predicted Velocity')
-        axs[i].plot(ts_values, label[:, i], label='Ground Truth Velocity')
+        axs[i].plot(ts_values, inf_state[:, i], label='Predicted')
+        axs[i].plot(ts_values, label[:, i], label='Ground Truth')
         axs[i].set_ylabel(f'Velocity {components[i]}')
         axs[i].legend()
         axs[i].grid(True, linestyle='--', alpha=0.7)
@@ -45,7 +45,7 @@ def plot_velocity_comparison(axs, name, mode, ts, inf_state, label):
     axs[2].set_xlabel('Time (s)')
     return axs
 
-def inference(network, loader, confs):
+def inference(network, loader, confs, coord):
     '''
     Correction inference
     save the corrections generated from the network.
@@ -67,20 +67,30 @@ def inference(network, loader, confs):
             obs_state = inte_state['net_vel'] if confs.obsersup else None
             obser_label = get_observable_label(ts, rot, gt_label)
             
-            if confs.obsersup:
-                init_state = gt_label[0][0]
-                rel_state, abs_state = retrieve_from_obser(ts, rot, obs_state, init_state)
-            else:
-                rel_state, abs_state = torch.diff(inte_state['net_vel'], axis=1), inte_state['net_vel']
-                obs_state = get_observable_label(ts, rot, abs_state)
+            if coord == 'glob_coord':
+                if confs.obsersup:
+                    init_state = gt_label[0][0]
+                    rel_state, abs_state = retrieve_from_obser(ts, rot, obs_state, init_state)
+                else:
+                    rel_state, abs_state = torch.diff(inte_state['net_vel'], axis=1), inte_state['net_vel']
+                    obs_state = get_observable_label(ts, rot, abs_state)
+            elif coord == 'body_coord':
+                if confs.obsersup:
+                    init_state = gt_label[0][0]
+                    rel_state, abs_state = retrieve_from_obser(ts, rot, obs_state, init_state)
+                else:
+                    abs_state = rot * inte_state['net_vel']
+                    rel_state, obs_state = torch.diff(abs_state, axis=1), get_observable_label(ts, rot, abs_state)
 
-            fig, axs = plt.subplots(3, 3, figsize=(15, 8))
+            plt.rcParams['font.sans-serif'] = 'Nimbus Sans'  
+            fig, axs = plt.subplots(3, 3, figsize=(15, 9))
+            ave = (abs_state - gt_label).norm(dim=-1).mean().item()
 
             plot_velocity_comparison(axs[:, 0], dataset_name, 'observable', ts, obs_state, obser_label)
             plot_velocity_comparison(axs[:, 1], dataset_name, 'relative', ts, rel_state, rel_label)
             plot_velocity_comparison(axs[:, 2], dataset_name, 'absolute', ts, abs_state, gt_label)
 
-            plt.suptitle(f'Velocity Comparison: {dataset_name}')
+            plt.suptitle(f'Sequence: {dataset_name} - AVE: {ave:.4f} m/s', fontsize=16, fontweight='bold')
             plt.tight_layout()
             plt.savefig(f'{save_folder}/{dataset_name}_velocity_comparison.png', dpi=300)
             plt.close(fig)
@@ -150,7 +160,7 @@ if __name__ == '__main__':
             eval_dataset = SequencesMotionDataset(data_set_config=dataset_conf, data_path=path, data_root=data_conf["data_root"])
             eval_loader = Data.DataLoader(dataset=eval_dataset, batch_size=args.batch_size, 
                                             shuffle=False, collate_fn=collate_fn, drop_last = False)
-            inference_state = inference(network=network, loader = eval_loader, confs=conf.train)  
+            inference_state = inference(network=network, loader = eval_loader, confs=conf.train, coord=dataset_conf.coordinate)  
             if not "cov" in inference_state.keys():
                     inference_state["cov"] = torch.zeros_like(inference_state["net_vel"])         
             inference_state['ts'] = inference_state['ts']

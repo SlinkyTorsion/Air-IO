@@ -35,8 +35,9 @@ class CodeNetMotion(torch.nn.Module):
         self.veldecoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
         self.velcov_decoder = nn.Sequential(nn.Linear(256, 128), nn.GELU(), nn.Linear(128, 3))
 
-    def encoder(self, x):
+    def encoder(self, x, obsersup=False):
         x = self.cnn(x.transpose(-1, -2)).transpose(-1, -2)
+        x = x[:, :-1, :] if obsersup else x
         x, _ = self.gru1(x)
         x, _ = self.gru2(x)
         return x
@@ -52,15 +53,15 @@ class CodeNetMotion(torch.nn.Module):
     def get_label(self, gt_label):   
         s_idx = (self.k_list[0] - self.p_list[0]) + self.s_list[0] * (self.k_list[1] - 1 -self.p_list[1]) + 1
         select_label = gt_label[:, s_idx::self.s_list[0]* self.s_list[1],:]
-        L_out = (gt_label.shape[1] -1 - 1) // self.s_list[0] // self.s_list[1] + 1
+        L_out = (gt_label.shape[1] - 1 - 1) // self.s_list[0] // self.s_list[1] + 1
         diff = L_out - select_label.shape[1]
         if diff > 0:
             select_label = torch.cat((select_label,gt_label[:,-1:,:].repeat(1,diff , 1)),dim = 1)
         return select_label
     
-    def forward(self, data, rot=None):
+    def forward(self, data, rot=None, obsersup=False):
         feature = torch.cat([data["acc"], data["gyro"]], dim = -1)
-        feature = self.encoder(feature)
+        feature = self.encoder(feature, obsersup)
         net_vel = self.decoder(feature)
    
         cov = None
@@ -94,7 +95,6 @@ class CodeNetMotionwithRot(CodeNetMotion):
         self.velcov_decoder = nn.Sequential(nn.Linear(256, 128),nn.GELU(), nn.Linear(128, 3))
 
     def encoder(self, feature, ori, obsersup=False):
-        # import pdb; pdb.set_trace()
         x1 = self.feature_encoder(feature.transpose(-1, -2)).transpose(-1, -2)
         x2 = self.ori_encoder(ori.transpose(-1,-2)).transpose(-1, -2) 
         x = torch.cat([x1, x2], dim = -1)
