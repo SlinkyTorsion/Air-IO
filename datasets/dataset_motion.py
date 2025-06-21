@@ -58,8 +58,8 @@ class SequencesMotionDataset(SequencesDataset):
         ## seting the starting and ending duration with different trianing mode
         start_frame, end_frame = 0, seq_len
 
-        if self.mode == 'train_70':
-            end_frame = np.floor(seq_len * 0.7).astype(int)
+        if self.mode == 'train_20':
+            end_frame = np.floor(seq_len * 0.2).astype(int)
         elif self.mode == 'test_30':
             start_frame = np.floor(seq_len * 0.7).astype(int)
 

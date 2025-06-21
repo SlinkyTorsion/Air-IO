@@ -155,7 +155,7 @@ if __name__ == '__main__':
             else:
                 dataset_conf["mode"] = "infevaluate"
             dataset_conf["exp_dir"] = conf.general.exp_dir
-            dataset_name = path.split("/")[1]
+            dataset_name = path.split("/")[1] if data_conf.name == 'BlackBird' else path
             print("dataset_name:", dataset_name)
             eval_dataset = SequencesMotionDataset(data_set_config=dataset_conf, data_path=path, data_root=data_conf["data_root"])
             eval_loader = Data.DataLoader(dataset=eval_dataset, batch_size=args.batch_size, 

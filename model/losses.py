@@ -1,9 +1,9 @@
 import torch
 from .loss_func import loss_fc_list, diag_ln_cov_loss
-from utils import report_hasNan
-import numpy as np
 
 def get_observable_label(ts, rot, label):
+    assert all(x.ndim == 3 for x in [ts, rot, label])
+    
     gravity = torch.tensor([0., 0., -9.81007], device=label.device)
     dt = torch.diff(ts, axis=1)
 
