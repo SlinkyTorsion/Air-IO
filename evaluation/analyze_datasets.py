@@ -11,7 +11,7 @@ from sklearn.manifold import TSNE
 from scipy.spatial.transform import Rotation
 import matplotlib.cm as cm
 from matplotlib.colors import Normalize
-
+from scipy import stats
 
 from datasets import SequencesMotionDataset
 from model.losses import get_observable_label
@@ -30,343 +30,326 @@ def plot_3d_traj(axs, traj):
         axs.set_box_aspect([1, 1, 1])
 
 
-def compute_velocity_magnitude(velocities):
-    """Compute the magnitude of velocity vectors"""
-    return np.linalg.norm(velocities, axis=1)
-
-
 def global_to_body_frame(vectors, orientations):
-    """
-    Convert any 3D vectors from global frame to body frame using quaternion orientations.
-    
-    Args:
-        vectors: Array of shape (N, 3) with vectors in global frame (velocity, acceleration, etc.)
-        orientations: Array of shape (N, 4) with quaternion orientations [w, x, y, z]
-        
-    Returns:
-        Array of shape (N, 3) with vectors in body frame
-    """
     return Rotation.from_quat(orientations).inv().apply(vectors)
 
 
-def prepare_data_for_manifold(data_seqs, modes, sample_limit=1000):
-    """
-    Prepare data for manifold learning analysis by sampling and concatenating sequences.
+def quat_to_rpy_degrees(quaternions):
+    """Convert quaternions to Roll-Pitch-Yaw angles in degrees with continuity wrapping."""
+    rotations = Rotation.from_quat(quaternions)
+    rpy_rad = rotations.as_euler('xyz', degrees=False)
+    rpy_deg = np.degrees(rpy_rad)
     
-    Args:
-        data_seqs: Dictionary of sequences by mode
-        modes: List of modes to include
-        sample_limit: Maximum samples per sequence
-        
-    Returns:
-        all_data: Concatenated data array
-        labels: Array of mode labels
-    """
-    all_data = []
-    labels = []
+    # Apply angle wrapping to maintain continuity in histograms
+    for i in range(3):
+        angles = rpy_deg[:, i]
+        if np.min(angles) < -90 and np.max(angles) > 90:
+            rpy_deg[:, i] = np.where(angles < 0, angles + 360, angles)
     
-    for mode_idx, mode in enumerate(modes):
-        for seq_name, data in data_seqs[mode].items():
-            sample_rate = max(1, len(data) // sample_limit)
-            data_ds = data[::sample_rate]
-            
-            all_data.append(data_ds)
-            labels.extend([mode_idx] * len(data_ds))
-    
-    return np.concatenate(all_data), np.array(labels)
+    return rpy_deg
 
 
-def prepare_aligned_data_for_manifold(data_seqs1, data_seqs2, modes, sample_limit=1000):
-    """
-    Prepare aligned data from two sequences for manifold learning analysis.
-    
-    Args:
-        data_seqs1: Primary data sequences (e.g., IMU)
-        data_seqs2: Secondary data sequences (e.g., velocity) 
-        modes: List of modes to include
-        sample_limit: Maximum samples per sequence
-        
-    Returns:
-        all_data1: Concatenated primary data
-        all_data2_mags: Magnitudes of secondary data
-        labels: Array of mode labels
-    """
-    all_data1 = []
-    all_data2_mags = []
-    labels = []
-    
-    for mode_idx, mode in enumerate(modes):
-        for seq_name in data_seqs1[mode]:
-            if seq_name in data_seqs2[mode]:
-                data1 = data_seqs1[mode][seq_name]
-                data2 = data_seqs2[mode][seq_name]
-                
-                min_len = min(len(data1), len(data2))
-                data1 = data1[:min_len]
-                data2 = data2[:min_len]
-                
-                data2_magnitudes = np.linalg.norm(data2, axis=1)
-                
-                sample_rate = max(1, len(data1) // sample_limit)
-                data1_ds = data1[::sample_rate]
-                data2_mags_ds = data2_magnitudes[::sample_rate]
-                
-                all_data1.append(data1_ds)
-                all_data2_mags.append(data2_mags_ds)
-                labels.extend([mode_idx] * len(data1_ds))
-    
-    return np.vstack(all_data1), np.concatenate(all_data2_mags), np.array(labels)
-
-
-def perform_manifold_analysis(data, method='tsne', apply_pca=False, pca_variance=0.95, random_state=42):
-    """
-    Perform manifold learning analysis with t-SNE or UMAP.
-    
-    Args:
-        data: Input data array
-        method: 'tsne' or 'umap'
-        apply_pca: Whether to apply PCA first
-        pca_variance: Variance to retain in PCA
-        random_state: Random state for reproducibility
-        
-    Returns:
-        manifold_result: 2D manifold coordinates
-        pca_components: Number of PCA components (if applied)
-    """
-    processed_data = data
-    pca_components = None
-    
-    if apply_pca:
-        print("Applying PCA for dimension reduction...")
-        pca = PCA(n_components=pca_variance)
-        processed_data = pca.fit_transform(data)
-        pca_components = processed_data.shape[1]
-        print(f"Reduced dimensions from {data.shape[1]} to {pca_components}")
-    
-    print(f"Applying {method.upper()}...")
-    if method == 'tsne':
-        manifold = TSNE(n_components=2, random_state=random_state, 
-                       perplexity=min(30, len(processed_data)//10))
-    else:  # umap
-        manifold = umap.UMAP(n_components=2, random_state=random_state,
-                           n_neighbors=50)
-    
-    manifold_result = manifold.fit_transform(processed_data)
-    return manifold_result, pca_components
-
-
-def plot_manifold_scatter(manifold_coords, labels, color_values, modes, title, save_path, 
-                         use_color_for_values=True, figsize=(12, 10)):
-    """
-    Unified function to plot manifold learning results with different visualization styles.
-    
-    Args:
-        manifold_coords: Manifold coordinates
-        labels: Mode labels (0, 1, ...)
-        color_values: Values to use for coloring/transparency
-        modes: Mode names
-        title: Plot title
-        save_path: Path to save figure
-        use_color_for_values: If True, use colormap for values; if False, use transparency
-        figsize: Figure size
-    """
-    plt.figure(figsize=figsize)
-    
-    if use_color_for_values:
-        # Color-based visualization with distinct markers
-        norm = Normalize(vmin=color_values.min(), vmax=color_values.max())
-        markers = ['o', '^']
-        edge_colors = ['white', 'black']
-        
-        for mode_idx, mode in enumerate(modes):
-            mode_mask = labels == mode_idx
-            scatter = plt.scatter(
-                manifold_coords[mode_mask, 0], manifold_coords[mode_mask, 1],
-                c=color_values[mode_mask], cmap='viridis', norm=norm,
-                marker=markers[mode_idx], s=25, alpha=0.8,
-                edgecolors=edge_colors[mode_idx], linewidths=0.5,
-                label=mode
-            )
-        
-        # Add colorbar and custom legend
-        cbar = plt.colorbar(scatter)
-        cbar.set_label('Velocity Magnitude (m/s)', rotation=270, labelpad=20)
-        
-        legend_elements = [
-            plt.Line2D([0], [0], marker=markers[i], color='w', label=mode,
-                      markerfacecolor='gray', markersize=8, 
-                      markeredgecolor=edge_colors[i], markeredgewidth=0.5)
-            for i, mode in enumerate(modes)
-        ]
-        plt.legend(handles=legend_elements, title="Dataset Type", loc='upper right')
-        
-    else:
-        # Transparency-based visualization
-        mode_colors = ['blue', 'green']
-        
-        # Calculate transparency values
-        if color_values.max() > color_values.min():
-            alpha_values = 0.2 + 0.7 * (color_values - color_values.min()) / (color_values.max() - color_values.min())
-        else:
-            alpha_values = np.full_like(color_values, 0.8)
-        
-        for mode_idx, mode in enumerate(modes):
-            mode_mask = labels == mode_idx
-            for i in np.where(mode_mask)[0]:
-                plt.scatter(manifold_coords[i, 0], manifold_coords[i, 1], 
-                           c=mode_colors[mode_idx], alpha=alpha_values[i], s=5)
-        
-        # Add legend and colorbar
-        legend_elements = [
-            plt.Line2D([0], [0], marker='o', color='w', label=mode,
-                      markerfacecolor=color, markersize=10)
-            for mode, color in zip(modes, mode_colors)
-        ]
-        plt.legend(handles=legend_elements, title="Dataset Type")
-        
-        sm = plt.cm.ScalarMappable(
-            norm=plt.Normalize(color_values.min(), color_values.max()), 
-            cmap='Greys'
-        )
-        sm.set_array([])
-        cbar = plt.colorbar(sm, ax=plt.gca())
-        cbar.set_label('Velocity Magnitude (m/s)')
-    
-    plt.title(title)
-    plt.xlabel('Component 1')
-    plt.ylabel('Component 2')
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300)
-    plt.close()
-
-
-def analyze_and_plot_manifold(data_seqs, modes, frame_name, data_type="velocity", 
-                             reference_seqs=None, apply_pca=False, method='tsne'):
-    """
-    Complete pipeline for manifold learning analysis and visualization.
-    
-    Args:
-        data_seqs: Data sequences to analyze
-        modes: List of mode names
-        frame_name: Frame name for titles
-        data_type: Type of data being analyzed
-        reference_seqs: Reference sequences for color coding (optional)
-        apply_pca: Whether to apply PCA preprocessing
-        method: 'tsne' or 'umap'
-    """
-    print(f"Performing {method.upper()} on {data_type} data...")
-    
-    if reference_seqs is not None:
-        # Aligned data analysis (e.g., IMU with velocity magnitudes)
-        all_data, color_values, labels = prepare_aligned_data_for_manifold(
-            data_seqs, reference_seqs, modes
-        )
-        use_color = True
-    else:
-        # Single data analysis (e.g., velocity vectors)
-        all_data, labels = prepare_data_for_manifold(data_seqs, modes)
-        color_values = np.linalg.norm(all_data, axis=1)
-        use_color = False
-    
-    # Perform manifold learning
-    manifold_coords, pca_dims = perform_manifold_analysis(all_data, method=method, apply_pca=apply_pca)
-    
-    # Generate title and filename
-    title = f'{method.upper()} of {data_type.title()} in {frame_name}'
-    if reference_seqs is not None:
-        title += ' (Color = Velocity Magnitude)'
-    else:
-        title += '\n(Transparency = Magnitude)'
-    
-    filename = f'./evaluation/{method}_{data_type}_{frame_name.lower().replace("-", "_")}.png'
-    
-    # Plot results
-    plot_manifold_scatter(manifold_coords, labels, color_values, modes, title, filename, 
-                         use_color_for_values=use_color)
-    
-    if pca_dims is not None:
-        print(f"PCA reduced dimensions to {pca_dims}")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Analyze datasets")
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/datasets/EuRoC/Euroc_body.conf",
-        help="config file path, i.e., configs/Euroc.conf",
-    )
-    parser.add_argument(
-        "--frame",
-        type=str,
-        choices=["glob", "body"],
-        default="body",
-        help="Use velocity in global or body frame (default: body)"
-    )
-    parser.add_argument(
-        "--type",
-        type=str,
-        choices=["abs", "obs"],
-        default="abs",
-        help="Use absolute or observable velocity (default: abs)"
-    )
-    parser.add_argument(
-        "--method",
-        type=str,
-        choices=["tsne", "umap"],
-        default="tsne",
-        help="Manifold learning method (default: tsne)"
-    )
-    args = parser.parse_args()
-    conf = ConfigFactory.parse_file(args.config)
-    if args.type == "obs":
-        args.frame = "body"
-
+def load_datasets(conf, data_type):
     train_dataset = SequencesMotionDataset(data_set_config=conf.train)
     test_dataset = SequencesMotionDataset(data_set_config=conf.test)
     eval_dataset = SequencesMotionDataset(data_set_config=conf.eval)
 
-    ts_seqs = {'train': {}, 'test': {}, 'eval': {}}
-    imu_seqs = {'train': {}, 'test': {}, 'eval': {}}
-    pos_seqs = {'train': {}, 'test': {}, 'eval': {}}
-    vel_seqs = {'train': {}, 'test': {}, 'eval': {}}
-    rot_seqs = {'train': {}, 'test': {}, 'eval': {}}
+    data_lists = {mode: {'ts': [], 'imu': [], 'pos': [], 'vel': [], 'rot': []} 
+                  for mode in ['train', 'test', 'eval']}
+    
     for mode, dataset, config in [
         ('train', train_dataset, conf.train),
         ('test', test_dataset, conf.test),
         ('eval', eval_dataset, conf.eval)
     ]:
-        for i, seq_name in enumerate(config.data_list[0].data_drive):
-            name = seq_name.split('/')[1] if config.data_list[0].name == 'BlackBird' else seq_name
-            ts_seqs[mode][name] = dataset.ts[i]
-            imu_seqs[mode][name] = np.concatenate((dataset.gyro[i], dataset.acc[i]), axis=1)
-            pos_seqs[mode][name] = dataset.gt_pos[i]
-            rot_seqs[mode][name] = dataset.gt_ori[i]
-            if args.type == "obs":
-                vel_seqs[mode][name] = get_observable_label(
+        for i, _ in enumerate(config.data_list[0].data_drive):
+            data_lists[mode]['ts'].append(dataset.ts[i])
+            data_lists[mode]['imu'].append(np.concatenate((dataset.gyro[i], dataset.acc[i]), axis=1))
+            data_lists[mode]['pos'].append(dataset.gt_pos[i][:-1])
+            data_lists[mode]['rot'].append(dataset.gt_ori[i][:-1])
+
+            args.frame = config.coordinate
+            
+            if data_type == "obs":
+                assert args.frame == 'body_coord'
+                glob_velo = dataset.gt_ori[i] * dataset.gt_velo[i]
+                vel = get_observable_label(
                     dataset.ts[i][None, :, None], 
                     dataset.gt_ori[i][None, :], 
-                    dataset.gt_velo[i][None, :]
+                    glob_velo[None, :]
                 ).squeeze()
             else:
-                vel_seqs[mode][name] = dataset.gt_velo[i]
+                vel = dataset.gt_velo[i]
+            data_lists[mode]['vel'].append(vel)
+
+    for mode in data_lists:
+        for key in data_lists[mode].keys():
+            data_lists[mode][key] = np.concatenate(data_lists[mode][key])
+
+    return data_lists
+
+
+def get_data_config(data_type, frame_name="Body-Frame"):
+    """Get configuration for different data types."""
+    configs = {
+        'imu': {
+            'sensors': [
+                ('gyro', ['ωx (rad/s)', 'ωy (rad/s)', 'ωz (rad/s)'], slice(0, 3), 'Gyroscope', 0),
+                ('acc', ['ax (m/s²)', 'ay (m/s²)', 'az (m/s²)'], slice(3, 6), 'Accelerometer', 1)
+            ],
+            'title': f'IMU Distribution Comparison ({frame_name})',
+            'filename_suffix': 'imu_histogram_comparison'
+        },
+        'velocity': {
+            'sensors': [
+                ('vel', ['vx (m/s)', 'vy (m/s)', 'vz (m/s)'], slice(0, 3), 'Velocity', 0)
+            ],
+            'title': f'Velocity Distribution Comparison ({frame_name})',
+            'filename_suffix': 'velocity_histogram_comparison'
+        },
+        'orientation': {
+            'sensors': [
+                ('rpy', ['Roll (°)', 'Pitch (°)', 'Yaw (°)'], slice(0, 3), 'Orientation (RPY)', 0)
+            ],
+            'title': f'Orientation Distribution Comparison ({frame_name})',
+            'filename_suffix': 'orientation_histogram_comparison'
+        }
+    }
+    return configs.get(data_type, {})
+
+
+# ---------------- Histogram ---------------- # 
+def compute_data_statistics(data, component_names):
+    """Compute statistics for multi-dimensional data."""
+    statistics = {}
+    for i, component in enumerate(component_names):
+        component_data = data[:, i]
+        statistics[component] = {
+            'mean': np.mean(component_data), 
+            'std': np.std(component_data),
+            'min': np.min(component_data), 
+            'max': np.max(component_data)
+        }
+    return statistics
+
+
+def plot_data_histogram(data_dict, data_type="imu", frame_name="Body-Frame", save_dir="./evaluation"):
+    """General histogram plotting function for different data types."""
+    config = get_data_config(data_type, frame_name)
+    if not config:
+        raise ValueError(f"Unsupported data type: {data_type}")
     
-    for mode in ['train', 'test', 'eval']:
-        for name in vel_seqs[mode]:
-            if name in rot_seqs[mode] and args.frame == "body":
-                imu_seqs[mode][name][:, :3] = global_to_body_frame(
-                    imu_seqs[mode][name][:, :3],
-                    rot_seqs[mode][name][:-1]
-                )
-                imu_seqs[mode][name][:, 3:] = global_to_body_frame(
-                    imu_seqs[mode][name][:, 3:],
-                    rot_seqs[mode][name][:-1]
-                )
-                vel_seqs[mode][name] = global_to_body_frame(
-                    vel_seqs[mode][name], 
-                    rot_seqs[mode][name]
-                ) if args.type == "abs" else vel_seqs[mode][name]
+    sensors = config['sensors']
+    max_components = max(len(sensor[1]) for sensor in sensors)
     
+    # Setup figure - rows for different sensor types, columns for components
+    fig, axes = plt.subplots(len(sensors), max_components, figsize=(4*max_components, 4*len(sensors)))
+    if len(sensors) == 1 and max_components == 1:
+        axes = np.array([[axes]])
+    elif len(sensors) == 1:
+        axes = axes.reshape(1, -1)
+    elif max_components == 1:
+        axes = axes.reshape(-1, 1)
+    
+    colors = plt.cm.Set1(np.linspace(0, 1, len(data_dict)))
+    
+    # Collect statistics for console output
+    all_stats = {}
+    for dataset_name, data in data_dict.items():
+        all_stats[dataset_name] = {}
+        for sensor_type, component_labels, indices, _, _ in sensors:
+            sensor_data = data[:, indices]
+            component_names = [label.split()[0] for label in component_labels]
+            all_stats[dataset_name][sensor_type] = compute_data_statistics(sensor_data, component_names)
+    
+    # Plot histograms
+    for sensor_idx, (sensor_type, component_labels, indices, title_prefix, row) in enumerate(sensors):
+        for comp_idx, component_label in enumerate(component_labels):
+            if len(sensors) == 1:
+                ax = axes[0, comp_idx] if max_components > 1 else axes[0, 0]
+            else:
+                ax = axes[sensor_idx, comp_idx] if max_components > 1 else axes[sensor_idx, 0]
+            
+            for dataset_idx, (dataset_name, data) in enumerate(data_dict.items()):
+                if indices.stop > data.shape[1]:
+                    print(f"Warning: {dataset_name} data has {data.shape[1]} components, expected at least {indices.stop}")
+                    continue
+                    
+                component_data = data[:, indices][:, comp_idx]
+                
+                # Plot histogram
+                ax.hist(component_data, bins=50, alpha=0.6, density=True, 
+                       label=dataset_name, color=colors[dataset_idx],
+                       edgecolor='black', linewidth=0.5)
+                
+                # Add mean line
+                mean_val = np.mean(component_data)
+                ax.axvline(mean_val, color=colors[dataset_idx], 
+                          linestyle='--', alpha=0.9, linewidth=2)
+            
+            ax.set_xlabel(component_label)
+            ax.set_ylabel('Density')
+            ax.set_title(f'{title_prefix} - {component_label.split()[0]}')
+            ax.grid(True, alpha=0.3)
+            
+            if comp_idx == 0:  # Legend only on first column
+                ax.legend(loc='upper right')
+    
+    # Hide unused subplots
+    for sensor_idx in range(len(sensors)):
+        for comp_idx in range(len(sensors[sensor_idx][1]), max_components):
+            if len(sensors) == 1:
+                ax = axes[0, comp_idx] if max_components > 1 else None
+            else:
+                ax = axes[sensor_idx, comp_idx] if max_components > 1 else None
+            if ax:
+                ax.set_visible(False)
+    
+    plt.suptitle(config['title'], fontsize=16)
+    plt.tight_layout()
+    
+    # Save plot
+    filename = f'{save_dir}/{config["filename_suffix"]}_{frame_name.lower().replace("-", "_")}.png'
+    plt.savefig(filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Print statistics summary to console
+    print(f"\n{data_type.upper()} Statistics Summary ({frame_name}):")
+    print("=" * 80)
+    for dataset_name in all_stats.keys():
+        print(f"\n{dataset_name}:")
+        for sensor_type, component_labels, _, title_prefix, _ in sensors:
+            print(f"  {title_prefix}:")
+            for component, stats in all_stats[dataset_name][sensor_type].items():
+                print(f"    {component}: μ={stats['mean']:.4f}, σ={stats['std']:.4f}")
+    
+    print(f"\nHistogram saved to: {filename}")
+    return all_stats
+
+
+# ---------------- Manifold ---------------- # 
+def prepare_data_for_manifold(inputs, reference_seqs=None):
+    """Prepare data for manifold learning from dictionary inputs."""
+    all_data = []
+    labels = []
+    color_values = []
+    
+    # Apply downsampling if data is too large
+    for idx, (name, data) in enumerate(inputs.items()):
+        max_samples = 10000
+        if len(data) > max_samples:
+            step = len(data) // max_samples
+            data = data[::step]
+            print(f"Downsampled {name} from {len(inputs[name])} to {len(data)} samples")
+        
+        all_data.append(data)
+        labels.extend([idx] * len(data))
+
+        if reference_seqs and name in reference_seqs:
+            ref_data = reference_seqs[name]
+            if len(inputs[name]) > max_samples:
+                ref_data = ref_data[::step]
+            color_values.extend(np.linalg.norm(ref_data, axis=1))
+    
+    return (np.concatenate(all_data), 
+            np.array(labels), 
+            np.array(color_values) if color_values else None)
+
+
+def perform_manifold_analysis(data, method='tsne', apply_pca=False, random_state=42):
+    """Apply PCA (optional) and manifold learning."""
+    if apply_pca:
+        pca = PCA(n_components=0.95)
+        data = pca.fit_transform(data)
+        print(f"PCA reduced dimensions to {data.shape[1]}")
+    
+    if method == 'tsne':
+        reducer = TSNE(n_components=2, random_state=random_state, 
+                      perplexity=min(30, len(data)//10))
+    else:
+        reducer = umap.UMAP(n_components=2, random_state=random_state)
+    
+    return reducer.fit_transform(data)
+
+
+def plot_manifold_results(coords, labels, color_values, modes, title, save_path):
+    """Plot manifold learning results with automatic styling."""
+    plt.figure(figsize=(12, 10))
+    
+    if color_values is not None:
+        # Use colormap with distinct markers for each dataset
+        markers = ['o', '^', 's', 'D', 'v'][:len(modes)]
+        norm = Normalize(vmin=color_values.min(), vmax=color_values.max())
+        
+        for i, mode in enumerate(modes):
+            mask = labels == i
+            scatter = plt.scatter(coords[mask, 0], coords[mask, 1],
+                       c=color_values[mask], cmap='viridis', norm=norm,
+                       marker=markers[i], s=20, alpha=0.7, label=mode,
+                       facecolors='none', linewidths=1)
+        
+        plt.colorbar(label='Velocity Magnitude (m/s)')
+        plt.legend(title="Dataset")
+    else:
+        # Simple color-coded scatter with hollow markers
+        colors = plt.cm.Set1(np.linspace(0, 1, len(modes)))
+        for i, (mode, color) in enumerate(zip(modes, colors)):
+            mask = labels == i
+            plt.scatter(coords[mask, 0], coords[mask, 1],
+                       cmap='viridis', edgecolors='k', label=mode, 
+                       alpha=0.8, s=30, linewidths=0.5)
+        plt.legend()
+    
+    plt.title(title)
+    plt.xlabel('Component 1')
+    plt.ylabel('Component 2')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+
+
+def analyze_and_plot_manifold(data_dict, frame_name, data_type="features", 
+                             reference_dict=None, apply_pca=False, method='tsne'):
+    """Complete manifold analysis pipeline."""
+    print(f"Analyzing {data_type} with {method.upper()}...")
+    
+    # Prepare data
+    data, labels, colors = prepare_data_for_manifold(data_dict, reference_dict)
+    
+    # Apply manifold learning
+    coords = perform_manifold_analysis(data, method=method, apply_pca=apply_pca)
+    
+    # Create plot
+    modes = list(data_dict.keys())
+    title = f'{method.upper()} Analysis: {data_type.title()} ({frame_name})'
+    filename = f'./evaluation/{method}_{data_type}_{frame_name.lower().replace("-", "_")}.png'
+    
+    plot_manifold_results(coords, labels, colors, modes, title, filename)
+    print(f"Saved plot to {filename}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Analyze datasets")
+    parser.add_argument("--config", type=str, nargs='+', default=["configs/datasets/EuRoC/Euroc_body.conf"])
+    parser.add_argument("--type", type=str, choices=["abs", "obs"], default="abs")
+    parser.add_argument("--method", type=str, choices=["tsne", "umap"], default="tsne")
+    parser.add_argument("--histogram",action="store_true")
+    parser.add_argument("--manifold",action="store_true")
+    args = parser.parse_args()
+
+    datasets = {}
+    coordinate_frames = set()
+    
+    for config_path in args.config:
+        name = config_path.split('/')[2]
+        print(f"Loading dataset {name} from {config_path}...")
+        conf = ConfigFactory.parse_file(config_path)
+        coordinate_frames.add(conf.train.coordinate)
+        if len(coordinate_frames) > 1:
+            raise ValueError(f"Inconsistent coordinate frames: {coordinate_frames}")
+        
+        datasets[name] = load_datasets(conf, args.type)
+
     plt.rcParams['font.sans-serif'] = 'Nimbus Sans'
     '''
     plt.figure(figsize=(20, 5))
@@ -380,21 +363,40 @@ if __name__ == "__main__":
     plt.savefig('./evaluation/train_traj.png', dpi=300)
     '''
     
-    frame_name = "Body-Frame" if args.frame == "body" else "Global-Frame"
-    modes = ['train', 'eval']
+    frame_name = "Body-Frame" if args.frame == "body_coord" else "Global-Frame"
 
-    # Velocity manifold analysis
-    analyze_and_plot_manifold(
-        vel_seqs, modes, frame_name, 
-        data_type="velocity",
-        method=args.method
-    )
+    imu_data = {}
+    vel_data = {}
+    rot_data = {}
+    for name in datasets:
+        imu_data[name] = np.concatenate([values['imu'] for _, values in datasets[name].items()])
+        vel_data[name] = np.concatenate([values['vel'] for _, values in datasets[name].items()])
 
-    # IMU manifold analysis with velocity magnitude coloring
-    analyze_and_plot_manifold(
-        imu_seqs, modes, frame_name, 
-        data_type="imu_features", 
-        reference_seqs=vel_seqs, 
-        apply_pca=True,
-        method=args.method
-    )
+        quat_data = np.concatenate([values['rot'] for _, values in datasets[name].items()])
+        rot_data[name] = quat_to_rpy_degrees(quat_data)
+
+    # Histogram analysis (optional)
+    if args.histogram:
+        print(f"\nAnalyzing data distributions ({frame_name})...")
+        imu_stats = plot_data_histogram(imu_data, data_type="imu", frame_name=frame_name)
+        vel_stats = plot_data_histogram(vel_data, data_type="velocity", frame_name=frame_name)
+        rot_stats = plot_data_histogram(rot_data, data_type="orientation", frame_name="Global-Frame")
+
+    # Manifold analysis (optional)
+    if args.manifold:
+        # Velocity manifold analysis
+        analyze_and_plot_manifold(
+            vel_data, frame_name, 
+            data_type="velocity",
+            reference_dict=vel_data,
+            method=args.method
+        )
+
+        # IMU manifold analysis with velocity magnitude coloring
+        analyze_and_plot_manifold(
+            imu_data, frame_name,
+            data_type="imu_features", 
+            reference_dict=vel_data, 
+            apply_pca=True,
+            method=args.method
+        )

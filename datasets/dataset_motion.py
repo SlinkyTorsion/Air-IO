@@ -25,7 +25,8 @@ class SequencesMotionDataset(SequencesDataset):
         device=device,
         )
         print(f"******* Loading {data_set_config.mode} dataset *******")
-        print(f"loaded: {data_set_config.data_list[0]['data_root']}")
+        for data_item in data_set_config.data_list:
+            print(f"loaded: {data_item['data_root']}")
         if "coordinate" in data_set_config:
             print(f"coordinate: {data_set_config.coordinate}")
         if "remove_g" in data_set_config and data_set_config.remove_g is True:

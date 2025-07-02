@@ -191,13 +191,6 @@ if __name__ == "__main__":
     else:
         gravity = 9.81007
     conf.train.coord = conf.dataset.train.coordinate
-    # if conf.train.obsersup:
-    #     assert all(var == 'glob_coord' for var in [
-    #         conf.dataset.train.coordinate,
-    #         conf.dataset.test.coordinate, 
-    #         conf.dataset.eval.coordinate
-    #         ]), \
-    #     "When obsersup is True, coordinates must be 'glob_coord'"
 
     train_dataset = SequencesMotionDataset(data_set_config=conf.dataset.train)
     test_dataset = SequencesMotionDataset(data_set_config=conf.dataset.test)
