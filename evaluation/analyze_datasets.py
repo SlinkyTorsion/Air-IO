@@ -16,19 +16,6 @@ from scipy import stats
 from datasets import SequencesMotionDataset
 from model.losses import get_observable_label
 
-def plot_3d_traj(axs, traj):
-        x, y, z = traj[:, 0], traj[:, 1], traj[:, 2]
-
-        axs.plot(x, y, z, label='Trajectory')
-        axs.scatter(x[0], y[0], z[0], c='green', marker='o', s=100, label='Start')
-        axs.scatter(x[-1], y[-1], z[-1], c='red', marker='o', s=100, label='End')
-
-        axs.set_xlabel('X'); axs.set_ylabel('Y'); axs.set_zlabel('Z')
-        axs.set_title('3D Trajectory')
-        axs.legend()
-
-        axs.set_box_aspect([1, 1, 1])
-
 
 def global_to_body_frame(vectors, orientations):
     return Rotation.from_quat(orientations).inv().apply(vectors)
@@ -49,12 +36,12 @@ def quat_to_rpy_degrees(quaternions):
     return rpy_deg
 
 
-def load_datasets(conf, data_type):
+def load_datasets(conf, data_type, transform=None):
     train_dataset = SequencesMotionDataset(data_set_config=conf.train)
     test_dataset = SequencesMotionDataset(data_set_config=conf.test)
     eval_dataset = SequencesMotionDataset(data_set_config=conf.eval)
 
-    data_lists = {mode: {'ts': [], 'imu': [], 'pos': [], 'vel': [], 'rot': []} 
+    data_lists = {mode: {'ts': [], 'imu': [], 'pos': [], 'vel': [], 'rot': [], 'sequences': []} 
                   for mode in ['train', 'test', 'eval']}
     
     for mode, dataset, config in [
@@ -62,28 +49,38 @@ def load_datasets(conf, data_type):
         ('test', test_dataset, conf.test),
         ('eval', eval_dataset, conf.eval)
     ]:
-        for i, _ in enumerate(config.data_list[0].data_drive):
-            data_lists[mode]['ts'].append(dataset.ts[i])
-            data_lists[mode]['imu'].append(np.concatenate((dataset.gyro[i], dataset.acc[i]), axis=1))
-            data_lists[mode]['pos'].append(dataset.gt_pos[i][:-1])
-            data_lists[mode]['rot'].append(dataset.gt_ori[i][:-1])
+        for i, seq in enumerate(config.data_list[0].data_drive):
+            seq_data = {
+                'name': seq,
+                'ts': dataset.ts[i],
+                'imu': np.concatenate((dataset.gyro[i], dataset.acc[i]), axis=1),
+                'pos': dataset.gt_pos[i][:-1],
+                'rot': dataset.gt_ori[i][:-1]
+            }
 
             args.frame = config.coordinate
             
             if data_type == "obs":
                 assert args.frame == 'body_coord'
                 glob_velo = dataset.gt_ori[i] * dataset.gt_velo[i]
-                vel = get_observable_label(
-                    dataset.ts[i][None, :, None], 
-                    dataset.gt_ori[i][None, :], 
-                    glob_velo[None, :]
+                seq_data['vel'] = get_observable_label(
+                    dataset.ts[i][None, :, None], dataset.gt_ori[i][None, :], glob_velo[None, :]
                 ).squeeze()
             else:
-                vel = dataset.gt_velo[i]
-            data_lists[mode]['vel'].append(vel)
+                seq_data['vel'] = dataset.gt_velo[i]
+
+            if transform is not None:
+                seq_data['imu'][:, :3] = np.dot(np.array(transform), seq_data['imu'][:, :3].T).T
+                seq_data['imu'][:, 3:] = np.dot(np.array(transform), seq_data['imu'][:, 3:].T).T
+                seq_data['rot'] = (Rotation.from_quat(seq_data['rot']) * Rotation.from_matrix(transform).inv()).as_quat()
+                seq_data['vel'] = np.dot(np.array(transform), seq_data['vel'].T).T
+
+            data_lists[mode]['sequences'].append(seq_data)
+            for key in ['ts', 'imu', 'pos', 'rot', 'vel']:
+                data_lists[mode][key].append(seq_data[key])
 
     for mode in data_lists:
-        for key in data_lists[mode].keys():
+        for key in ['ts', 'imu', 'pos', 'vel', 'rot']:
             data_lists[mode][key] = np.concatenate(data_lists[mode][key])
 
     return data_lists
@@ -328,6 +325,89 @@ def analyze_and_plot_manifold(data_dict, frame_name, data_type="features",
     print(f"Saved plot to {filename}")
 
 
+def plot_trajectory_with_orientation(ax, pos_traj, rot_traj, title="Trajectory", orientation_interval=50):
+    """Plot 3D trajectory with orientation frames."""
+    if hasattr(pos_traj, 'detach'):
+        pos_traj = pos_traj.detach().cpu().numpy()
+    if hasattr(rot_traj, 'detach'):
+        rot_traj = rot_traj.detach().cpu().numpy()
+    
+    x, y, z = pos_traj[:, 0], pos_traj[:, 1], pos_traj[:, 2]
+    
+    # Plot trajectory
+    ax.plot(x, y, z, color='purple', linewidth=1.5)
+    ax.scatter(x[0], y[0], z[0], c='green', s=60, label='Start')
+    ax.scatter(x[-1], y[-1], z[-1], c='red', s=60, label='End')
+    
+    # Plot orientation frames
+    indices = range(0, len(pos_traj), orientation_interval)
+    trajectory_range = max(np.ptp(x), np.ptp(y), np.ptp(z))
+    scale = max(0.5, trajectory_range * 0.1)
+    
+    # Standard basis vectors and colors
+    basis = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+    colors = ['red', 'green', 'blue']
+    
+    for idx, i in enumerate(indices):
+        if i >= len(pos_traj):
+            break
+            
+        pos = pos_traj[i]
+        quat = rot_traj[i]
+        alpha = 0.2 + 0.4 * (idx / (len(indices) - 1))
+        
+        rotation = Rotation.from_quat(quat)
+        rotated_axes = rotation.apply(basis)
+
+        for axis, color in zip(rotated_axes, colors):
+            end_point = pos + axis * scale
+            ax.plot([pos[0], end_point[0]], [pos[1], end_point[1]], [pos[2], end_point[2]], 
+                   color=color, linewidth=6, alpha=alpha, solid_capstyle='round')
+            ax.scatter(*end_point, c=color, s=30, alpha=alpha)
+    
+    max_range = max(np.ptp(x), np.ptp(y), np.ptp(z))
+    center = [np.mean([np.min(coord), np.max(coord)]) for coord in [x, y, z]]
+    
+    for i, (axis_func, label) in enumerate([(ax.set_xlim, 'X (m)'), (ax.set_ylim, 'Y (m)'), (ax.set_zlim, 'Z (m)')]):
+        axis_func(center[i] - max_range/2, center[i] + max_range/2)
+    
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_zlabel('Z (m)')
+    ax.set_title(title, fontweight='bold')
+    ax.legend()
+    ax.set_box_aspect([1, 1, 1])
+    ax.grid(True, alpha=0.3)
+
+
+def visualize_sequences(datasets, dataset_name, mode):
+    """Visualize sequences from datasets with position and orientation."""
+    dataset = datasets[dataset_name]
+    sequences = dataset[mode]['sequences']
+    
+    if not sequences:
+        print(f"No sequences found for {dataset_name} {mode}")
+        return
+    
+    num_sequences = len(sequences)
+    plt.figure(figsize=(4*num_sequences, 4))
+    
+    for i, seq in enumerate(sequences):
+        ax = plt.subplot(1, num_sequences, i + 1, projection='3d')
+        plot_trajectory_with_orientation(
+            ax, seq['pos'], seq['rot'],
+            title=f"{seq['name']}\n(with orientation)",
+            orientation_interval=len(seq['pos']) // 3
+        )
+    
+    plt.tight_layout()
+    save_path = f'./evaluation/{dataset_name}_{mode}_trajectories.png'
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    plt.close()
+    print(f"Trajectory visualization saved to: {save_path}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analyze datasets")
     parser.add_argument("--config", type=str, nargs='+', default=["configs/datasets/EuRoC/Euroc_body.conf"])
@@ -336,9 +416,15 @@ if __name__ == "__main__":
     parser.add_argument("--histogram",action="store_true")
     parser.add_argument("--manifold",action="store_true")
     args = parser.parse_args()
+    plt.rcParams['font.sans-serif'] = 'Nimbus Sans'
 
     datasets = {}
     coordinate_frames = set()
+
+    # tranform EuRoC to BlackBird
+    transform = [[0, 1, 0],
+                 [0, 0, -1],
+                 [-1, 0, 0]]
     
     for config_path in args.config:
         name = config_path.split('/')[2]
@@ -348,20 +434,11 @@ if __name__ == "__main__":
         if len(coordinate_frames) > 1:
             raise ValueError(f"Inconsistent coordinate frames: {coordinate_frames}")
         
-        datasets[name] = load_datasets(conf, args.type)
-
-    plt.rcParams['font.sans-serif'] = 'Nimbus Sans'
-    '''
-    plt.figure(figsize=(20, 5))
-    train_trajs = list(pos_seqs['train'].items())
-    for i in range(min(5, len(train_trajs))):
-        name, traj = train_trajs[i]
-        ax = plt.subplot(1, 5, i+1, projection='3d')
-        plot_3d_traj(ax, traj[:len(traj)])
-        ax.set_title(f'Train: {name}')
-    plt.tight_layout()
-    plt.savefig('./evaluation/train_traj.png', dpi=300)
-    '''
+        if name == 'BlackBird':
+            transform = None
+        datasets[name] = load_datasets(conf, args.type, transform)
+        for mode in ['test']:
+            visualize_sequences(datasets, name, mode)
     
     frame_name = "Body-Frame" if args.frame == "body_coord" else "Global-Frame"
 

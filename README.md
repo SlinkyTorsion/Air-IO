@@ -2,6 +2,61 @@
 ![Introduction](img/blackbird_github.gif)
 
 ## 📦 Installation & Dataset Setup  
+
+### Docker Deployment (Recommended for Remote Machines)
+
+For easy deployment on remote machines with GPU support, use the provided Docker setup:
+
+**Prerequisites:**
+- Docker installed
+- NVIDIA GPU with CUDA support
+- nvidia-container-toolkit installed (for GPU support)
+
+```bash
+# Install nvidia-container-toolkit (if not already installed)
+# Ubuntu/Debian:
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+
+# Clone and deploy
+git clone https://github.com/Air-IO/Air-IO.git
+cd Air-IO
+
+# Deploy using Docker with GPU support
+cd docker
+chmod +x deploy.sh
+./deploy.sh
+
+# Access the container and verify GPU access
+docker exec -it airio-app bash
+nvidia-smi  # Should show your GPU(s)
+```
+
+The Docker setup uses Python 3.12.9 with CUDA 12.1 support and includes all necessary dependencies. Make sure to download the datasets and update the `data_root` paths in your config files.
+
+### Manual Docker Commands
+
+If you prefer to run Docker commands manually:
+
+```bash
+# Build the image
+cd docker
+docker build -t airio:latest -f Dockerfile ..
+
+# Run the container with GPU support
+docker run -it --name airio-app \
+    --gpus all \
+    --runtime=nvidia \
+    -v $(pwd)/../experiments:/app/experiments \
+    -v $(pwd)/../EKFresult:/app/EKFresult \
+    airio:latest
+```
+
 ### Environment Installation
  See `requirements.txt` for environment requirements. 
  

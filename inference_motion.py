@@ -3,8 +3,12 @@ import sys
 import time
 import torch
 
-import torch.utils.data as Data
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+plt.rcParams['font.sans-serif'] = ['Nimbus Sans', 'DejaVu Sans', 'Arial', 'sans-serif']
+
+import torch.utils.data as Data
 import argparse
 import pickle
 
@@ -82,7 +86,6 @@ def inference(network, loader, confs, coord):
                     abs_state = rot * inte_state['net_vel']
                     rel_state, obs_state = torch.diff(abs_state, axis=1), get_observable_label(ts, rot, abs_state)
 
-            plt.rcParams['font.sans-serif'] = 'Nimbus Sans'  
             fig, axs = plt.subplots(3, 3, figsize=(15, 9))
             ave = (abs_state - gt_label).norm(dim=-1).mean().item()
 
@@ -143,6 +146,24 @@ if __name__ == '__main__':
     else:
         collate_fn = collate_fcs['base']
 
+    # Body alignment
+    transform = {}
+    exp_dataset_name = dataset_conf.data_list[0].name
+    net_dataset_name = conf.general.exp_dir.split('/')[1]
+    if dataset_conf.coordinate == 'body_coord':
+        if exp_dataset_name == 'Euroc' and net_dataset_name != exp_dataset_name:
+            print("Performing body coordinate alignment. (EuRoC -> BlackBird)")
+            transform['euroc'] = [[0, 1, 0],
+                                      [0, 0, -1],
+                                      [-1, 0, 0]]
+        elif exp_dataset_name == 'BlackBird' and net_dataset_name == 'euroc':
+            print("Performing body coordinate alignment. (BlackBird -> EuRoC)")
+            transform['blackbird'] = [[0, 0, -1],
+                                          [1, 0, 0],
+                                          [0, -1, 0]]
+        else:
+            transform[exp_dataset_name.lower()] = None
+
     cov_result, rmse = [], []
     net_out_result = {}
     evals = {}
@@ -157,7 +178,10 @@ if __name__ == '__main__':
             dataset_conf["exp_dir"] = conf.general.exp_dir
             dataset_name = path.split("/")[1] if data_conf.name == 'BlackBird' else path
             print("dataset_name:", dataset_name)
-            eval_dataset = SequencesMotionDataset(data_set_config=dataset_conf, data_path=path, data_root=data_conf["data_root"])
+            
+            eval_dataset = SequencesMotionDataset(data_set_config=dataset_conf, data_path=path, data_root=data_conf["data_root"],
+                body_transform=transform
+            )
             eval_loader = Data.DataLoader(dataset=eval_dataset, batch_size=args.batch_size, 
                                             shuffle=False, collate_fn=collate_fn, drop_last = False)
             inference_state = inference(network=network, loader = eval_loader, confs=conf.train, coord=dataset_conf.coordinate)  

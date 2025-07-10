@@ -186,6 +186,7 @@ class SequencesDataset(Data.Dataset):
         data_path=None,
         data_root=None,
         device="cuda:0",
+        body_transform=None,
     ):
         super(SequencesDataset, self).__init__()
         (
@@ -207,6 +208,13 @@ class SequencesDataset(Data.Dataset):
         self.conf = data_set_config
         self.gravity = self.conf.gravity if "gravity" in self.conf.keys() else 9.81007
         self.weights = []
+        self.body_transform = body_transform
+        if self.body_transform is not None:
+            self.body_transform = {
+                k: torch.tensor(v, dtype=torch.float64) 
+                for k, v in self.body_transform.items() 
+                if v is not None
+            }
 
         if mode is None:
             self.mode = data_set_config.mode

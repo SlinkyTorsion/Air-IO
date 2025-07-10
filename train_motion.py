@@ -192,9 +192,21 @@ if __name__ == "__main__":
         gravity = 9.81007
     conf.train.coord = conf.dataset.train.coordinate
 
-    train_dataset = SequencesMotionDataset(data_set_config=conf.dataset.train)
-    test_dataset = SequencesMotionDataset(data_set_config=conf.dataset.test)
-    eval_dataset = SequencesMotionDataset(data_set_config=conf.dataset.eval)
+    # Body alignment - unify to BlackBird body frame
+    transform = {}
+    if conf.dataset.train.coordinate == 'body_coord':
+        for data_conf in conf.dataset.train.data_list:
+            if data_conf.name == 'Euroc':
+                print("Performing body coordinate alignment for training. (EuRoC -> BlackBird)")
+                transform['euroc'] = [[0, 1, 0],
+                                      [0, 0, -1],
+                                      [-1, 0, 0]]
+            else:
+                transform[data_conf.name.lower()] = None
+
+    train_dataset = SequencesMotionDataset(data_set_config=conf.dataset.train, body_transform=transform)
+    test_dataset = SequencesMotionDataset(data_set_config=conf.dataset.test, body_transform=transform)
+    eval_dataset = SequencesMotionDataset(data_set_config=conf.dataset.eval, body_transform=transform)
 
     if "collate" in conf.dataset.keys():
         collate_fn_train, collate_fn_test = collate_fcs[conf.dataset.collate.type], collate_fcs[conf.dataset.collate.type]

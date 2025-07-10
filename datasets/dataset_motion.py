@@ -16,6 +16,7 @@ class SequencesMotionDataset(SequencesDataset):
         data_path=None,
         data_root=None,
         device="cuda:0",
+        body_transform=None,
     ):
         super().__init__(
         data_set_config=data_set_config,
@@ -23,6 +24,7 @@ class SequencesMotionDataset(SequencesDataset):
         data_path=data_path,
         data_root=data_root,
         device=device,
+        body_transform=body_transform,
         )
         print(f"******* Loading {data_set_config.mode} dataset *******")
         for data_item in data_set_config.data_list:
@@ -42,18 +44,33 @@ class SequencesMotionDataset(SequencesDataset):
 
     
     def load_data(self, seq, start_frame, end_frame):
+        gyro_data = seq.data["gyro"][start_frame:end_frame]
+        acc_data = seq.data["acc"][start_frame:end_frame]
+        gt_velo_data = seq.data["velocity"][start_frame:end_frame + 1]
+        gt_ori_data = seq.data["gt_orientation"][start_frame:end_frame + 1]
+
+        dataset_name = getattr(seq, 'dataset_name', 'default').lower()
+        body_transform = self.body_transform.get(dataset_name, None)
+        if body_transform is not None:
+            gyro_data = torch.matmul(body_transform, gyro_data.T).T
+            acc_data = torch.matmul(body_transform, acc_data.T).T
+            gt_ori_data = pp.SO3(gt_ori_data) * pp.mat2SO3(body_transform.T)
+            if self.mode != "infevaluate" and self.mode != "inference":
+                gt_velo_data = torch.matmul(body_transform, gt_velo_data.T).T
+        
         self.ts.append(seq.data["time"][start_frame:end_frame + 1])
-        self.acc.append(seq.data["acc"][start_frame:end_frame])
-        self.gyro.append(seq.data["gyro"][start_frame:end_frame])
+        self.gyro.append(gyro_data)
+        self.acc.append(acc_data)
         self.dt.append(seq.data["dt"][start_frame : end_frame + 1])
         self.gt_pos.append(seq.data["gt_translation"][start_frame : end_frame + 1])
-        self.gt_ori.append(seq.data["gt_orientation"][start_frame : end_frame + 1])
-        self.gt_velo.append(seq.data["velocity"][start_frame : end_frame + 1])
+        self.gt_ori.append(gt_ori_data)
+        self.gt_velo.append(gt_velo_data)
 
     def construct_index_map(self, conf, data_root, data_name, seq_id):
         seq = self.DataClass[conf.name](
             data_root, data_name,  **self.conf
         )
+        seq.dataset_name = conf.name
         seq_len = seq.get_length() - 1
         window_size, step_size = conf.window_size, conf.step_size
         ## seting the starting and ending duration with different trianing mode
