@@ -53,7 +53,7 @@ def get_motion_loss(inte_state, label, confs, ts=None, rot=None):
             vel_loss += confs.cov_weight * diag_ln_cov_loss(vel_dist, cov)
         else:
             vel_loss += confs.cov_weight * diag_ln_cov_loss(vel_dist.detach(), cov)
-    loss = abs_loss
+    loss = obs_loss if confs.obsersup else abs_loss
     return {'loss':loss, 'abs_loss': abs_loss, 'obs_loss': obs_loss, 'cov_loss':cov_loss}
 
 

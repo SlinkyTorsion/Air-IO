@@ -196,7 +196,7 @@ if __name__ == "__main__":
     transform = {}
     if conf.dataset.train.coordinate == 'body_coord':
         for data_conf in conf.dataset.train.data_list:
-            if data_conf.name == 'Euroc':
+            if data_conf.name.lower() == 'euroc' and 'euroc' not in args.config.lower():
                 print("Performing body coordinate alignment for training. (EuRoC -> BlackBird)")
                 transform['euroc'] = [[0, 1, 0],
                                       [0, 0, -1],

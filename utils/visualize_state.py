@@ -52,10 +52,11 @@ def visualize_rotations(save_prefix, gt_rot, out_rot, inf_rot=None, save_folder=
     gt_euler = np.unwrap(pp.SO3(gt_rot).euler(), axis=0, discont=np.pi/2) * 180.0 / np.pi
     outstate_euler = np.unwrap(pp.SO3(out_rot).euler(), axis=0, discont=np.pi/2) * 180.0 / np.pi
 
+    roe_raw = (pp.SO3(gt_rot).Inv() @ pp.SO3(out_rot)).Log().norm(dim=-1).cpu().numpy() * 180.0 / np.pi
+    print(f"ROE - Raw Integration: {np.mean(roe_raw):.3f} degrees")
+    
     legend_list = ["roll", "pitch","yaw"]
-    fig, axs = plt.subplots(
-        3,
-    )
+    fig, axs = plt.subplots(3)
     fig.suptitle("integrated orientation")
     for i in range(3):
         axs[i].plot(outstate_euler[:, i], color="b", linewidth=0.9)
@@ -65,21 +66,45 @@ def visualize_rotations(save_prefix, gt_rot, out_rot, inf_rot=None, save_folder=
 
     if inf_rot is not None:
         infstate_euler = np.unwrap(pp.SO3(inf_rot).euler(), axis=0, discont=np.pi/2) * 180.0 / np.pi
+
+        roe_airimu = (pp.SO3(gt_rot).Inv() @ pp.SO3(inf_rot)).Log().norm(dim=-1).cpu().numpy() * 180.0 / np.pi
+        print(f"ROE - AirIMU: {np.mean(roe_airimu):.3f} degrees")
+        print(f"ROE Improvement: {np.mean(roe_raw) - np.mean(roe_airimu):.3f} degrees")
+        
         for i in range(3):
             axs[i].plot(infstate_euler[:, i], color="red", linewidth=0.9)
-            axs[i].legend(
-                [
-                    "raw_" + legend_list[i],
-                    "gt_" + legend_list[i],
-                    "AirIMU_" + legend_list[i],
-                ]
-            )
+            axs[i].legend(["raw_" + legend_list[i], "gt_" + legend_list[i], "AirIMU_" + legend_list[i]])
+
+        visualize_orientation_error(save_prefix, gt_euler, outstate_euler, infstate_euler, save_folder)
+    else:
+        visualize_orientation_error(save_prefix, gt_euler, outstate_euler, None, save_folder)
+    
     plt.tight_layout()
     if save_folder is not None:
-        plt.savefig(
-            os.path.join(save_folder, save_prefix + "_orientation_compare.png"), dpi=300
-        )
-    # plt.show()
+        plt.savefig(os.path.join(save_folder, save_prefix + "_orientation_compare.png"), dpi=300)
+    plt.close()
+
+def visualize_orientation_error(save_prefix, gt_euler, out_euler, inf_euler=None, save_folder=None):
+    legend_list = ["roll", "pitch", "yaw"]
+    fig, axs = plt.subplots(3, figsize=(10, 8))
+    fig.suptitle("orientation error")
+    
+    for i in range(3):
+        axs[i].plot(out_euler[:, i] - gt_euler[:, i], color="b", linewidth=0.9)
+        axs[i].set_ylabel(f"{legend_list[i]}")
+        axs[i].grid(True)
+        
+        if inf_euler is not None:
+            axs[i].plot(inf_euler[:, i] - gt_euler[:, i], color="red", linewidth=0.9)
+            axs[i].legend(["raw_error", "AirIMU_error"])
+        else:
+            axs[i].legend(["raw_error"])
+    
+    axs[-1].set_xlabel("Sample Index")
+    plt.tight_layout()
+    
+    if save_folder is not None:
+        plt.savefig(os.path.join(save_folder, save_prefix + "_orientation_error.png"), dpi=300)
     plt.close()
 
 def visualize_positions(save_prefix, gt_pos, out_pos, inf_pos=None, save_folder=None):
