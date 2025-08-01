@@ -11,14 +11,24 @@ from pyhocon import ConfigFactory
 from datasets import SeqInfDataset, SeqDataset, imu_seq_collate
 
 from utils import CPU_Unpickler, integrate
-from utils.visualize_state import visualize_rotations
+from utils.visualize_state import visualize_rotations, visualize_positions
 import pickle
+
+def report_correction(data_name, inference_state):
+    import numpy as np
+    correction_acc = inference_state['correction_acc'][0].cpu().numpy()
+    correction_gyro = inference_state['correction_gyro'][0].cpu().numpy()
+    correction_acc = np.mean(correction_acc, axis=0)
+    correction_gyro = np.mean(correction_gyro, axis=0)
+
+    print(f"acc correction for {data_name}: ", correction_acc)
+    print(f"gyro correction for {data_name}: ", correction_gyro)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataconf", type=str, help="the configuration of the dataset")
     parser.add_argument("--exp", type=str, default=None, help="Directory of AirIMU outputs ")
-    parser.add_argument("--savedir",type=str,default = "./result/loss_result/orientations",help = "save directory")
+    parser.add_argument("--savedir",type=str,default = "./result/airimu/",help = "save directory")
     parser.add_argument("--device", type=str, default="cpu", help="cuda or cpu, Default is cuda:0")
 
     args = parser.parse_args(); 
@@ -44,7 +54,6 @@ if __name__ == '__main__':
     for data_conf in dataset_conf.data_list:
         for data_name in data_conf.data_drive:
             print(f"dataset: {data_conf.name}, sequence: {data_name}")
-            save_cur_state = {}
             # DataLoader for the raw IMU data
             dataset = SeqDataset(data_conf.data_root, data_name, args.device, name = data_conf.name, duration=200, step_size=200, drop_last=False, conf = dataset_conf)
             loader = Data.DataLoader(dataset=dataset, batch_size=1, collate_fn=imu_seq_collate, shuffle=False, drop_last=False)
@@ -54,6 +63,7 @@ if __name__ == '__main__':
             infloader = Data.DataLoader(dataset=dataset_inf, batch_size=1, 
                                         collate_fn=imu_seq_collate, 
                                         shuffle=False, drop_last=False)
+            report_correction(data_name, inference_state)
 
             # Initialize the IMU preintegrator for the raw and AirIMU corrected data
             init = dataset.get_init_value()
@@ -80,9 +90,12 @@ if __name__ == '__main__':
             )
             
             # Save the results
-            save_cur_state["airimu_rot"] = infstate['orientations'][0]
-            save_cur_state["inte_rot"] = outstate['orientations'][0]
-            save_states[data_name] = save_cur_state
+            save_states[data_name] = {
+                'airimu_rot': infstate['orientations'][0],
+                'inte_rot': outstate['orientations'][0],
+                'airimu_pos': infstate['poses'][0],
+                'inte_pos': outstate['poses'][0]
+            }
 
             # Visualize the results 
             if data_conf.name == "BlackBird":
@@ -90,8 +103,9 @@ if __name__ == '__main__':
             else:
                 save_prefix = data_name
             visualize_rotations(save_prefix,outstate['orientations_gt'][0],outstate['orientations'][0],inf_rot=infstate['orientations'][0],save_folder=folder)
+            visualize_positions(save_prefix,outstate['poses_gt'][0],outstate['poses'][0],inf_pos=infstate['poses'][0],save_folder=folder)
 
-        net_result_path = os.path.join(folder, 'orientation_output.pickle')
-        print("save orientation, ", net_result_path)
+        net_result_path = os.path.join(folder, 'state_output.pickle')
+        print("save state, ", net_result_path)
         with open(net_result_path, 'wb') as handle:
             pickle.dump(save_states, handle, protocol=pickle.HIGHEST_PROTOCOL)

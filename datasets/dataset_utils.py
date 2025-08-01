@@ -68,6 +68,8 @@ def motion_collate_data(data):
     acc = torch.stack([d['acc'] for d in data])
     gyro = torch.stack([d['gyro'] for d in data])
     rot = torch.stack([d['rot'] for d in data])
+    denoise_acc = torch.stack([d['denoise_acc'] for d in data]) if 'denoise_acc' in data[0] else None
+    denoise_gyro = torch.stack([d['denoise_gyro'] for d in data]) if 'denoise_gyro' in data[0] else None
 
     gt_pos = torch.stack([d["gt_pos"] for d in data])
     gt_rot = torch.stack([d["gt_rot"] for d in data])
@@ -86,6 +88,8 @@ def motion_collate_data(data):
             "acc": acc,
             "gyro": gyro,
             "rot": rot,
+            "denoise_acc": denoise_acc,
+            "denoise_gyro": denoise_gyro,
         },
         {
             "pos": init_pos,

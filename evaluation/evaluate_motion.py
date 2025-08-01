@@ -35,6 +35,7 @@ if __name__ == '__main__':
     parser.add_argument("--dataconf", type=str, default="configs/datasets/EuRoC/Euroc_body.conf", help="the configuration of the dataset")
     parser.add_argument("--savedir",type=str,default = "./result/loss_result",help = "Directory where the results wiil be saved")
     parser.add_argument("--usegtrot", action="store_true", help="Use ground truth rotation for gravity compensation")
+    parser.add_argument("--obsersup", action="store_true", help="Trained using observable supervision ")
 
     args = parser.parse_args(); 
     print(("\n"*3) + str(args) + ("\n"*3))
@@ -109,8 +110,18 @@ if __name__ == '__main__':
                         net_vel = rotation * net_vel
                     
                     if dataset_conf["coordinate"] == "glob_coord":
-                        vel_dist = inference_state['net_vel'] - motion_dataset.data['velocity'][indices,:]    
-                        net_vel = interp_xyz(gt_ts, vel_ts[:,0], inference_state['net_vel'])
+                        if args.obsersup:
+                            init_vel = init['vel']
+                            gravity = torch.tensor([0., 0., 9.81007])
+                            rotation = motion_dataset.data['gt_orientation'] 
+
+                            obs_vel = interp_xyz(gt_ts, vel_ts[:,0], inference_state['net_vel'])
+                            rel_vel = rotation * obs_vel + gravity * torch.diff(gt_ts, axis=0)
+                            net_vel = torch.cumsum(rel_vel, dim=1) + init_vel[:, None]
+                            vel_dist = net_vel - motion_dataset.data['velocity'][indices,:]
+                        else:
+                            vel_dist = inference_state['net_vel'] - motion_dataset.data['velocity'][indices,:]    
+                            net_vel = interp_xyz(gt_ts, vel_ts[:,0], inference_state['net_vel'])
 
                 if data_conf.name == "BlackBird":
                     save_prefix = os.path.dirname(data_name).split('/')[1]

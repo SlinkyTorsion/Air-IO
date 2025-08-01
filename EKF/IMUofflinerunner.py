@@ -18,13 +18,12 @@ from datasets import imu_seq_collate,SeqDataset, SeqInfDataset
 from utils import CPU_Unpickler, integrate, interp_xyz
 from utils.velocity_integrator import Velocity_Integrator, integrate_pos
 
-from utils.visualize_state import visualize_velocity, visualize_rotations
+from utils.visualize_state import visualize_rotations, visualize_ekf_result
 
 from ekf import IMUEKF
 from IMUstate import IMUstate
 from matplotlib import pyplot as plt
 from ekfutil import plot_bias_subplots, interp_xyz
-import pdb
 
 class SingleIMU(IMUstate):
     '''
@@ -258,8 +257,6 @@ if __name__ == '__main__':
             plt.plot(ekf_result[:, 6], ekf_result[:, 7], label="EKF")
             plt.plot(gtpos[:, 0], gtpos[:, 1], label="GT")
             
-            plt.savefig(os.path.join(folder, f"{data_name}_ekf_result.png"))
-            
             # visualize the net velocity
             io_ts = io_result["ts"][:,0]
             net_vel = io_result["net_vel"]
@@ -272,5 +269,5 @@ if __name__ == '__main__':
             net_vel_dist = (gtvel-interp_net_vel).norm(dim=-1)
 
             plot_bias_subplots(ekf_result[:, 9:12], title="EKF Bias", save_path=os.path.join(folder, f"{data_name}_bias.png"))
-            visualize_rotations(f"EKF_rot_{data_name}", gtrot, pp.so3(ekf_result[:, :3]).Exp(), save_folder=folder)
-            visualize_velocity(f"EKF_vel_{data_name}", gtvel, ekf_result[:, 3:6], interp_net_vel, save_folder=folder)
+            visualize_rotations(f"{data_name}", gtrot, pp.so3(ekf_result[:, :3]).Exp(), save_folder=folder)
+            visualize_ekf_result(f"{data_name}", folder, ekf_result, gtpos, gtvel, interp_net_vel)

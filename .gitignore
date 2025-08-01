@@ -172,6 +172,9 @@ dmypy.json
 *.out
 *.sh
 
+# figure
+*.png
+
 #experiments
 experiments
 

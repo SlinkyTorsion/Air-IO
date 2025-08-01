@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  airio:
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: airio-app
+    working_dir: /app
+    volumes:
+      - ../datasets:/app/datasets
+      - ../experiments:/app/experiments
+      - ../EKFresult:/app/EKFresult
+      - ../configs:/app/configs
+      - ../model:/app/model
+      - ../datasets:/app/datasets
+      - ../evaluation:/app/evaluation
+      - ../EKF:/app/EKF
+    environment:
+      - PYTHONPATH=/app
+      - CUDA_VISIBLE_DEVICES=""
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+    networks:
+      - airio-network
+
+networks:
+  airio-network:
+    driver: bridge

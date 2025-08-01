@@ -80,6 +80,8 @@ class SeqDataset(Data.Dataset):
             "dt": self.data["dt"][frame_id:end_frame_id],
             "acc": self.data["acc"][frame_id:end_frame_id],
             "gyro": self.data["gyro"][frame_id:end_frame_id],
+            "denoise_acc": self.data["denoise_acc"][frame_id:end_frame_id] if "denoise_acc" in self.data.keys() else None,
+            "denoise_gyro": self.data["denoise_gyro"][frame_id:end_frame_id] if "denoise_gyro" in self.data.keys() else None,
             "rot": self.data["gt_orientation"][frame_id:end_frame_id],
             "gt_pos": self.data["gt_translation"][frame_id + 1 : end_frame_id + 1],
             "gt_rot": self.data["gt_orientation"][frame_id + 1 : end_frame_id + 1],
@@ -170,7 +172,7 @@ class SeqInfDataset(SeqDataset):
         }
 
 
-class SeqeuncesDataset(Data.Dataset):
+class SequencesDataset(Data.Dataset):
     """
     For the purpose of training and inferering
     1. Abandon the features of the last time frame, since there are no ground truth pose and dt
@@ -184,25 +186,35 @@ class SeqeuncesDataset(Data.Dataset):
         data_path=None,
         data_root=None,
         device="cuda:0",
+        body_transform=None,
     ):
-        super(SeqeuncesDataset, self).__init__()
+        super(SequencesDataset, self).__init__()
         (
             self.ts,
             self.dt,
             self.acc,
             self.gyro,
+            self.denoise_acc,
+            self.denoise_gyro,
             self.gt_pos,
             self.gt_ori,
             self.gt_velo,
             self.index_map,
             self.seq_idx,
-        ) = ([], [], [], [], [], [], [], [], 0)
+        ) = ([], [], [], [], [], [], [], [], [], [], 0)
         self.uni = torch.distributions.uniform.Uniform(-torch.ones(1), torch.ones(1))
         self.device = device
         self.interpolate = True
         self.conf = data_set_config
         self.gravity = self.conf.gravity if "gravity" in self.conf.keys() else 9.81007
         self.weights = []
+        self.body_transform = body_transform
+        if self.body_transform is not None:
+            self.body_transform = {
+                k: torch.tensor(v, dtype=torch.float64) 
+                for k, v in self.body_transform.items() 
+                if v is not None
+            }
 
         if mode is None:
             self.mode = data_set_config.mode
@@ -369,7 +381,7 @@ if __name__ == "__main__":
     print(args)
     conf = ConfigFactory.parse_file(args.config)
 
-    dataset = SeqeuncesDataset(data_set_config=conf.train)
+    dataset = SequencesDataset(data_set_config=conf.train)
     loader = Data.DataLoader(
         dataset=dataset, batch_size=1, shuffle=False, collate_fn=custom_collate
     )

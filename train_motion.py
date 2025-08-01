@@ -3,7 +3,7 @@ import os
 import tqdm, wandb
 from model import net_dict
 
-from datasets import collate_fcs,SeqeuncesMotionDataset
+from datasets import collate_fcs,SequencesMotionDataset
 import pickle
 
 import numpy as np
@@ -27,18 +27,22 @@ def train(network, loader, confs, epoch, optimizer):
     Outputs all targets, predicts, predicted covariance params, and losses
     """
     network.train()
-    losses, pred_cov = 0, 0
+    losses, abs_losses, obs_losses, pred_cov = 0, 0, 0, 0
 
     t_range = tqdm.tqdm(loader)
     for i, (data,_, label) in enumerate(t_range):
         data, label = move_to([data, label], confs.device)
         rot = label['gt_rot'][:,:-1,:].Log().tensor()
-        inte_state = network(data, rot)
+        inte_state = network(data, rot, confs.obsersup)
         gt_label = network.get_label(label['gt_vel'])
-        loss_state = get_motion_loss(inte_state, gt_label, confs)
+        ts = network.get_label(data['ts'][..., None])
+        rot = network.get_label(label['gt_rot'])
+        loss_state = get_motion_loss(inte_state, gt_label, confs, ts, rot)
 
         # statistics
         losses += loss_state["loss"].item()
+        abs_losses += loss_state["abs_loss"].item()
+        obs_losses += loss_state["obs_loss"].item()
 
         if confs.propcov:
             pred_cov += loss_state["cov_loss"].mean().item()
@@ -52,23 +56,28 @@ def train(network, loader, confs, epoch, optimizer):
         loss_state["loss"].backward()
         optimizer.step()
 
-    return {"loss": (losses / (i + 1)), "cov": (pred_cov / (i + 1))}
+    return {"loss": (losses / (i + 1)), "abs_loss": (abs_losses / (i + 1)),
+            "obs_loss": (obs_losses / (i + 1)), "cov": (pred_cov / (i + 1))}
 
 
 def test(network, loader, confs):
     network.eval() 
     with torch.no_grad():
-        losses, pred_cov = 0, 0
+        losses, abs_losses, obs_losses, pred_cov = 0, 0, 0, 0
 
         t_range = tqdm.tqdm(loader)
         for i, (data, _, label) in enumerate(t_range):
             data,label = move_to([data, label], confs.device)
             rot = label['gt_rot'][:,:-1,:].Log().tensor()
-            inte_state = network(data,rot)
+            inte_state = network(data, rot, confs.obsersup)
             gt_label = network.get_label(label['gt_vel'])
-            loss_state = get_motion_RMSE(inte_state, gt_label,confs)
+            ts = network.get_label(data['ts'][..., None]) 
+            rot = network.get_label(label['gt_rot'])
+            loss_state = get_motion_RMSE(inte_state, gt_label, confs, ts, rot)
             # statistics
             losses += loss_state["loss"].item()
+            abs_losses += loss_state["abs_loss"].item()
+            obs_losses += loss_state["obs_loss"].item()
 
             if confs.propcov:
                 pred_cov += loss_state["cov_loss"].mean().item()
@@ -79,13 +88,14 @@ def test(network, loader, confs):
                 "testing loss: %.06f, cov: %.06f, error: %.06f" % (
                     losses / (i + 1), 
                     cov_loss_value, 
-                    loss_state['dist']
+                    loss_state['abs_dist']
                 )
             )
 
             t_range.refresh()
             
-    return {"loss": (losses / (i + 1)), "cov": (pred_cov / (i + 1))}
+    return {"loss": (losses / (i + 1)), "abs_loss": (abs_losses / (i + 1)),
+            "obs_loss": (obs_losses / (i + 1)), "cov": (pred_cov / (i + 1))}
 
 
 def evaluate(network, loader, confs, silent_tqdm=False):
@@ -100,9 +110,11 @@ def evaluate(network, loader, confs, silent_tqdm=False):
             
             data,label = move_to([data, label], confs.device)
             rot = label['gt_rot'][:,:-1,:].Log().tensor()
-            inte_state = network(data,rot)
+            inte_state = network(data, rot, confs.obsersup)
             gt_label = network.get_label(label['gt_vel'])
-            loss_state = get_motion_RMSE(inte_state, gt_label, confs)
+            ts = network.get_label(data['ts'][..., None])
+            rot = network.get_label(label['gt_rot'])
+            loss_state = get_motion_RMSE(inte_state, gt_label, confs, ts, rot)
 
             save_state(loss_states, loss_state)
             save_state(evaluate_states, inte_state)
@@ -178,10 +190,23 @@ if __name__ == "__main__":
         conf.train.put("gravity", conf.dataset.train.gravity)
     else:
         gravity = 9.81007
+    conf.train.coord = conf.dataset.train.coordinate
 
-    train_dataset = SeqeuncesMotionDataset(data_set_config=conf.dataset.train)
-    test_dataset = SeqeuncesMotionDataset(data_set_config=conf.dataset.test)
-    eval_dataset = SeqeuncesMotionDataset(data_set_config=conf.dataset.eval)
+    # Body alignment - unify to BlackBird body frame
+    transform = {}
+    if conf.dataset.train.coordinate == 'body_coord':
+        for data_conf in conf.dataset.train.data_list:
+            if data_conf.name.lower() == 'euroc' and 'euroc' not in args.config.lower():
+                print("Performing body coordinate alignment for training. (EuRoC -> BlackBird)")
+                transform['euroc'] = [[0, 1, 0],
+                                      [0, 0, -1],
+                                      [-1, 0, 0]]
+            else:
+                transform[data_conf.name.lower()] = None
+
+    train_dataset = SequencesMotionDataset(data_set_config=conf.dataset.train, body_transform=transform)
+    test_dataset = SequencesMotionDataset(data_set_config=conf.dataset.test, body_transform=transform)
+    eval_dataset = SequencesMotionDataset(data_set_config=conf.dataset.eval, body_transform=transform)
 
     if "collate" in conf.dataset.keys():
         collate_fn_train, collate_fn_test = collate_fcs[conf.dataset.collate.type], collate_fcs[conf.dataset.collate.type]
@@ -276,7 +301,9 @@ if __name__ == "__main__":
             eval_state = evaluate(network=network, loader=eval_loader, confs=conf.train)
             if args.log:
                 write_wandb('eval/loss', eval_state['loss']['loss'].mean(), epoch_i)
-                write_wandb('eval/dist', eval_state['loss']['dist'].mean(), epoch_i)
+                write_wandb('eval/abs_loss', eval_state['loss']['abs_loss'].mean(), epoch_i)
+                write_wandb('eval/obs_loss', eval_state['loss']['obs_loss'].mean(), epoch_i)
+                write_wandb('eval/abs_dist', eval_state['loss']['abs_dist'].mean(), epoch_i)
             if "supervise_pos" in conf.train:
                 print("eval pos: %f "%(eval_state['loss']['loss'].mean()))
             else:
