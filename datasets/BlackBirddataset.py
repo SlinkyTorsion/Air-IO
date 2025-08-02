@@ -25,7 +25,7 @@ class BlackBird(Sequence):
         rot_path=None,
         rot_type=None,
         gravity=9.81007, 
-        remove_g=False,
+        remove_g=True,
         **kwargs
     ):
         super(BlackBird, self).__init__()
