@@ -1,14 +1,6 @@
 import torch
 from .loss_func import loss_fc_list, diag_ln_cov_loss
 
-def compute_multi_scale_components(rot, net_vel, label):
-    assert rot.shape == net_vel.shape + 1
-    omegas = rot[:, :-1, :].Inv() @ rot[:, 1:, :]
-    omegas = omegas[:, ::2, :] @ omegas[:, 1::2, :]
-    net_vel = net_vel[:, ::2, :] + omegas @ net_vel[:, 1::2, :]
-    label = label[:, ::2, :] + omegas @ label[:, 1::2, :]
-    return net_vel, label
-
 def get_observable_label(ts, rot, label, coord):
     assert all(x.ndim == 3 for x in [ts, rot, label])
 
@@ -37,6 +29,32 @@ def motion_loss_(fc, pred, targ):
     loss = fc(dist)
     return loss, dist
 
+def multi_scale_motion_loss_(loss_fc, rot, net_vel, label):
+    assert rot.shape[1] == net_vel.shape[1] + 1
+    omegas = rot[:, :-1, :].Inv() @ rot[:, 1:, :]
+
+    batch_size = net_vel.shape[0]
+    N = [2]
+    losses = 0.0
+    for i in N:
+        tlen = (net_vel.shape[1] // i) * i
+        omegas, net_vel, label = [x[:, :tlen, :] for x in [omegas, net_vel, label]]
+
+        omegas_i = omegas.reshape(batch_size, -1, i, omegas.shape[-1])
+        net_vel_i = net_vel.reshape(batch_size, -1, i, net_vel.shape[-1])
+        label_i = label.reshape(batch_size, -1, i, label.shape[-1])
+        
+        id_quat = torch.tensor([0, 0, 0, 1], device=rot.device).expand(batch_size, omegas_i.shape[1], 1, -1)
+        omegas_i = torch.cat([id_quat, omegas_i[:, :, :-1, :]], dim=-2)
+        for j in range(1, omegas_i.shape[-2]):
+            omegas_i[:, :, j, :] = omegas_i[:, :, j-1, :] * omegas_i[:, :, j, :]
+        net_vel_i = torch.sum(omegas_i * net_vel_i, dim=-2)
+        label_i = torch.sum(omegas_i * label_i, dim=-2)
+
+        loss, _ = motion_loss_(loss_fc, net_vel_i, label_i)
+        losses += loss / i
+    return losses
+
 def get_motion_loss(inte_state, label, confs, ts=None, rot=None):
     ## The state loss for evaluation
     loss, cov_loss = 0, {}
@@ -54,6 +72,9 @@ def get_motion_loss(inte_state, label, confs, ts=None, rot=None):
     vel_loss, vel_dist = motion_loss_(loss_fc, vel, label)
     obs_vel_loss, obs_vel_dist = motion_loss_(loss_fc, obs_vel, obs_label)
     abs_loss, obs_loss = confs.weight * vel_loss, confs.obs_weight * obs_vel_loss
+
+    obs_vel_loss = multi_scale_motion_loss_(loss_fc, rot, obs_vel, obs_label)
+    obs_loss += confs.obs_weight * obs_vel_loss
 
     # Apply the covariance loss
     if confs.propcov:
