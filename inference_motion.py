@@ -49,7 +49,7 @@ def plot_velocity_comparison(axs, name, mode, ts, inf_state, label):
     axs[2].set_xlabel('Time (s)')
     return axs
 
-def inference(network, loader, confs, coord):
+def inference(network, loader, confs):
     '''
     Correction inference
     save the corrections generated from the network.
@@ -57,6 +57,7 @@ def inference(network, loader, confs, coord):
     network.eval()
     evaluate_states = {}
     ave = 0.0
+    coord = 'glob_coord'    # all states of inference always in global coordinate
     with torch.no_grad():
         inte_state = None
         for data, _, label in tqdm.tqdm(loader):
@@ -68,24 +69,19 @@ def inference(network, loader, confs, coord):
             rot = network.get_label(label['gt_rot'])
             gt_label = network.get_label(label['gt_vel'])
             rel_label = torch.diff(gt_label, axis=1)
+            obser_label = get_observable_label(ts, rot, gt_label, coord)
             
-            obs_state = inte_state['net_vel'] if confs.obsersup else None
-            obser_label = get_observable_label(ts, rot, gt_label)
-            
-            if coord == 'glob_coord':
-                if confs.obsersup:
-                    init_state = gt_label[0][0]
-                    rel_state, abs_state = retrieve_from_obser(ts, rot, obs_state, init_state)
-                else:
+            if confs.obsersup:
+                init_state = gt_label[0][0]
+                obs_state = inte_state['net_vel']
+                rel_state, abs_state = retrieve_from_obser(ts, rot, obs_state, init_state, coord)
+            else:
+                if coord == 'glob_coord':
                     rel_state, abs_state = torch.diff(inte_state['net_vel'], axis=1), inte_state['net_vel']
-                    obs_state = get_observable_label(ts, rot, abs_state)
-            elif coord == 'body_coord':
-                if confs.obsersup:
-                    init_state = gt_label[0][0]
-                    rel_state, abs_state = retrieve_from_obser(ts, rot, obs_state, init_state)
+                    obs_state = get_observable_label(ts, rot, abs_state, coord)
                 else:
                     abs_state = rot * inte_state['net_vel']
-                    rel_state, obs_state = torch.diff(abs_state, axis=1), get_observable_label(ts, rot, abs_state)
+                    rel_state, obs_state = torch.diff(abs_state, axis=1), get_observable_label(ts, rot, abs_state, coord)
 
             fig, axs = plt.subplots(3, 3, figsize=(15, 9))
             ave = (abs_state - gt_label).norm(dim=-1).mean().item()
@@ -190,7 +186,7 @@ if __name__ == '__main__':
             )
             eval_loader = Data.DataLoader(dataset=eval_dataset, batch_size=args.batch_size, 
                                             shuffle=False, collate_fn=collate_fn, drop_last = False)
-            inference_state = inference(network=network, loader = eval_loader, confs=conf.train, coord=dataset_conf.coordinate)  
+            inference_state = inference(network=network, loader = eval_loader, confs=conf.train)  
             if not "cov" in inference_state.keys():
                     inference_state["cov"] = torch.zeros_like(inference_state["net_vel"])         
             inference_state['ts'] = inference_state['ts']
