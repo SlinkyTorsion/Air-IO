@@ -29,7 +29,7 @@ def motion_loss_(fc, pred, targ):
     loss = fc(dist)
     return loss, dist
 
-def multi_scale_motion_loss_(loss_fc, rot, net_vel, labe, overlap=False):
+def multi_scale_motion_loss_(loss_fc, rot, net_vel, label, overlap=False):
     assert rot.shape[1] == net_vel.shape[1] + 1
     omegas = rot[:, :-1, :].Inv() @ rot[:, 1:, :]
 
