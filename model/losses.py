@@ -29,7 +29,7 @@ def motion_loss_(fc, pred, targ):
     loss = fc(dist)
     return loss, dist
 
-def multi_scale_motion_loss_(loss_fc, rot, net_vel, label):
+def multi_scale_motion_loss_(loss_fc, rot, net_vel, labe, overlap=False):
     assert rot.shape[1] == net_vel.shape[1] + 1
     omegas = rot[:, :-1, :].Inv() @ rot[:, 1:, :]
 
@@ -40,10 +40,16 @@ def multi_scale_motion_loss_(loss_fc, rot, net_vel, label):
         tlen = (net_vel.shape[1] // i) * i
         omegas, net_vel, label = [x[:, :tlen, :] for x in [omegas, net_vel, label]]
 
-        omegas_i = omegas.reshape(batch_size, -1, i, omegas.shape[-1])
-        net_vel_i = net_vel.reshape(batch_size, -1, i, net_vel.shape[-1])
-        label_i = label.reshape(batch_size, -1, i, label.shape[-1])
-        
+        if not overlap:
+            omegas_i = omegas.reshape(batch_size, -1, i, omegas.shape[-1])
+            net_vel_i = net_vel.reshape(batch_size, -1, i, net_vel.shape[-1])
+            label_i = label.reshape(batch_size, -1, i, label.shape[-1])
+        else:
+            num_windows = tlen - i + 1
+            omegas_i = torch.stack([omegas[:, j:j+i, :] for j in range(num_windows)], dim=1)
+            net_vel_i = torch.stack([net_vel[:, j:j+i, :] for j in range(num_windows)], dim=1)
+            label_i = torch.stack([label[:, j:j+i, :] for j in range(num_windows)], dim=1)
+
         id_quat = torch.tensor([0, 0, 0, 1], device=rot.device).expand(batch_size, omegas_i.shape[1], 1, -1)
         omegas_i = torch.cat([id_quat, omegas_i[:, :, :-1, :]], dim=-2)
         for j in range(1, omegas_i.shape[-2]):
